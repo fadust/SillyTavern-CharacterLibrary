@@ -15309,7 +15309,6 @@ function openGreetingsModal() {
         }
         
         closeModal();
-        document.removeEventListener('keydown', handleKeydown);
         showToast('Greetings updated', 'success');
     };
 }
@@ -15533,7 +15532,6 @@ function openLorebookModal() {
 
         updateLorebookCount();
         closeModal();
-        document.removeEventListener('keydown', handleKeydown);
         showToast('Lorebook updated', 'success');
     };
 }
@@ -15788,7 +15786,6 @@ function openExpandedFieldEditor(fieldId, fieldLabel) {
         }
         
         closeExpandModal();
-        document.removeEventListener('keydown', handleKeydown);
         showToast('Changes applied to field', 'success');
     };
 }
