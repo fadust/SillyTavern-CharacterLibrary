@@ -504,6 +504,7 @@ function injectLauncherStyles() {
         }
         /* ---- Launcher dropdown ---- */
         .charlib-launcher-dropdown {
+            display: none; /* Closed menus must not extend the page's scroll area. */
             position: fixed;
             z-index: 30000;
             min-width: 210px;
@@ -520,6 +521,7 @@ function injectLauncherStyles() {
             transition: opacity 0.18s ease, transform 0.18s ease;
         }
         .charlib-launcher-dropdown.visible {
+            display: block;
             opacity: 1;
             transform: translateY(0) scale(1);
             pointer-events: auto;
