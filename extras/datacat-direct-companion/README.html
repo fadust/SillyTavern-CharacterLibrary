@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Datacat Direct Import setup</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{font:17px/1.6 system-ui;background:#17191f;color:#eee;max-width:780px;margin:48px auto;padding:0 20px}a{color:#bdaaff}code{overflow-wrap:anywhere}h1{font-size:1.7em}</style>
+<h1>Datacat Direct Import</h1>
+<p>One-time Chrome setup. After this, select a card in Character Library and click <strong>Import</strong>. Your signed-in Datacat tab opens, downloads the official card, and returns it automatically. Complete Datacat's human check there when requested.</p>
+<ol>
+<li>In Chrome, open <code>chrome://extensions</code> and enable <strong>Developer mode</strong>.</li>
+<li>Click <strong>Load unpacked</strong> and select <code>extras/datacat-direct-companion</code> inside your SillyTavern Character Library extension folder.</li>
+<li>Reload Character Library and click <strong>Import</strong> again.</li>
+</ol>
+<p>The companion runs only on <code>datacat.run</code> and the local Character Library page on <code>localhost</code> or <code>127.0.0.1</code>. It reads no passwords, cookies, account tokens, or browsing history. It has no file access or downloads permission. Pending requests use temporary browser-session storage, so verification can outlast Chrome's background-worker suspension.</p>
+<p>cl-helper remains the first download attempt. This companion handles exports that Datacat requires your browser to verify. Creator restrictions and normal verification remain in place. Character Library checks the returned PNG and selected identity before importing it. Public Source lorebooks are enriched by the existing import path when Datacat's PNG omits them.</p>
+<p>Remove or disable this companion from Chrome's Extensions page whenever you want.</p>
+</html>

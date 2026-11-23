@@ -1278,6 +1278,34 @@ body {
     border: 1px solid rgba(0, 188, 212, 0.3);
 }
 
+.char-card .card-quick-chat {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    width: 28px;
+    height: 28px;
+    background: rgba(0, 0, 0, 0.6);
+    border-radius: var(--radius-circle);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-primary);
+    font-size: 13px;
+    z-index: 10;
+    backdrop-filter: blur(4px);
+    opacity: 0;
+    transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.char-card:hover .card-quick-chat {
+    opacity: 1;
+}
+
+.char-card .card-quick-chat:hover {
+    background: var(--accent);
+    color: #fff;
+}
+
 .hide-playlist-badges .playlist-indicator {
     display: none;
 }
@@ -8852,6 +8880,8 @@ html:not(.cl-mobile) .settings-row[data-platform="mobile"] { display: none !impo
     border-bottom: none;
     cursor: grab;
     user-select: none;
+    overflow: hidden;
+    min-width: 0;
     transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
     position: relative;
 }
@@ -9039,6 +9069,62 @@ html:not(.cl-mobile) .settings-row[data-platform="mobile"] { display: none !impo
 .provider-order-item.provider-disabled .provider-order-name {
     text-decoration: line-through;
     text-decoration-color: rgba(255, 255, 255, 0.3);
+}
+
+.provider-hide-defaults-row {
+    display: grid;
+    grid-template-columns: 24px minmax(140px, 1fr) auto auto;
+    align-items: center;
+    gap: var(--space-sm);
+    min-width: 0;
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: none;
+}
+
+.provider-hide-defaults-row:first-child {
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.provider-hide-defaults-row:last-child {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+
+.provider-hide-defaults-row .provider-order-icon {
+    width: 18px;
+    color: var(--accent);
+    opacity: 0.8;
+    font-size: var(--font-md-lg);
+    text-align: center;
+}
+
+.provider-hide-defaults-row .provider-order-name {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: var(--font-md);
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.provider-hide-defaults-row .provider-default-hide {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    min-width: 112px;
+    color: var(--text-secondary);
+    font-size: var(--font-xs);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.provider-hide-defaults-row .provider-default-hide input {
+    flex: 0 0 auto;
+    margin: 0;
+    cursor: pointer;
 }
 
 .settings-group-title {
@@ -11018,6 +11104,32 @@ html.cl-initial-loading .mobile-fab {
     display: none !important;
 }
 
+/* Top-bar lorebooks launch: the manager fills the embedded panel. The library shell
+   stays in the DOM (character details still open on top) but is not shown. */
+html.cl-lorebooks-only .app-container,
+html.cl-lorebooks-only #mobileBottomNav,
+html.cl-lorebooks-only #mobileFab,
+html.cl-lorebooks-only #mobileOnlineSearchOverlay {
+    display: none !important;
+}
+html.cl-lorebooks-only body::before {
+    content: "Loading lorebooks…";
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary, #a0a0a0);
+    font-size: 14px;
+    pointer-events: none;
+    z-index: 1;
+}
+html.cl-lorebooks-only:has(#lorebookModal:not(.hidden)) body::before,
+html.cl-lorebooks-only.cl-lorebooks-booted body::before {
+    content: none;
+    display: none;
+}
+
 /* Filters wrapper - prevents layout shift */
 .filters-wrapper {
     display: flex;
@@ -12301,6 +12413,18 @@ html.cl-initial-loading .mobile-fab {
     transition: all 0.2s;
 }
 
+/* Retro hard-offset shadow for dialog footer buttons (Add New / Done in the
+   Alternate Fields popup). Shadow is non-color (black alpha) so it respects
+   the user's accent theming via the .cl-btn-primary / .cl-btn-secondary fills. */
+.cl-modal-footer .cl-btn {
+    box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.45);
+}
+
+.cl-modal-footer .cl-btn:active {
+    box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.45);
+    transform: translate(2px, 2px);
+}
+
 /* Subordinate button size for inline / per-item actions inside a cl-modal.
    Use this for per-row editor controls, per-message chat actions, toolbar utility
    buttons, etc. Footer-level dialog buttons stay at the default .cl-btn tier. */
@@ -12600,5 +12724,456 @@ html.cl-initial-loading .mobile-fab {
 
 body.embedded-mode .logo-area {
     gap: var(--space-xs, 4px);
+}
+
+/* Nicknames Extension Integration (edit pane)  */
+/* ============================================ */
+
+.cl-nickname-section {
+    margin-top: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--glass-border);
+}
+
+.cl-nickname-section .nickname-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: nowrap;
+    gap: var(--space-sm);
+}
+
+.cl-nickname-section .nickname-title {
+    margin: 0;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.cl-nickname-section .nickname-title .nickname-extension-icon {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.cl-nickname-section .context-indicators {
+    display: flex;
+    gap: 6px;
+}
+
+.cl-nickname-section .context-indicators .context-icon {
+    font-size: 13px;
+    color: var(--text-secondary);
+    opacity: 0.4;
+}
+
+.cl-nickname-section .context-indicators .context-icon.nickname-set {
+    color: var(--accent);
+    opacity: 1;
+}
+
+/* Input row: text field + save + clear all on one line */
+.cl-nickname-section .nickname-input-row {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--space-xs);
+    margin-top: var(--space-sm);
+}
+
+.cl-nickname-section .nickname-input {
+    flex: 1 1 auto;
+    min-width: 120px;
+    height: 36px;
+    padding: 6px 12px;
+    font-size: var(--font-base);
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.cl-nickname-section .nickname-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.2);
+}
+
+.cl-nickname-section .nickname-save-btn,
+.cl-nickname-section .nickname-clear-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+    font-size: 14px;
+    background: rgba(var(--accent-rgb), 0.15);
+    border: 1px solid rgba(var(--accent-rgb), 0.3);
+    border-radius: var(--radius-md);
+    color: var(--accent);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.cl-nickname-section .nickname-save-btn:hover {
+    background: rgba(var(--accent-rgb), 0.3);
+    border-color: var(--accent);
+    box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.2);
+}
+
+.cl-nickname-section .nickname-clear-btn {
+    background: rgba(var(--cl-error-bright-rgb, 231, 76, 60), 0.1);
+    border-color: rgba(var(--cl-error-bright-rgb, 231, 76, 60), 0.3);
+    color: var(--cl-danger-text, #ff6b7a);
+}
+
+.cl-nickname-section .nickname-clear-btn:hover:not(:disabled) {
+    background: rgba(var(--cl-error-bright-rgb, 231, 76, 60), 0.25);
+    border-color: var(--cl-error-bright, #e74c3c);
+}
+
+.cl-nickname-section .nickname-clear-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+/* Context selector: "Save to:" + Global / Char / Chat buttons on one line */
+.cl-nickname-section .context-buttons {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: var(--space-xs);
+    margin-top: var(--space-sm);
+    font-size: var(--font-sm);
+}
+
+.cl-nickname-section .context-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    font-size: var(--font-sm);
+    white-space: nowrap;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    transition: all 0.15s ease;
+}
+
+.cl-nickname-section .context-btn:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+}
+
+.cl-nickname-section .context-btn.active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: rgba(var(--accent-rgb), 0.12);
+}
+
+.cl-nickname-section .context-btn:not(.active) {
+    color: var(--text-secondary);
+}
+
+/* Inline drawer toggle ("View all levels") */
+.cl-nickname-section .inline-drawer-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    margin-top: var(--space-sm);
+    cursor: pointer;
+    user-select: none;
+    color: var(--accent);
+    font-size: var(--font-sm);
+    transition: color 0.15s ease;
+}
+
+.cl-nickname-section .inline-drawer-toggle:hover {
+    color: var(--accent-hover);
+}
+
+.cl-nickname-section .inline-drawer-icon {
+    font-size: 12px;
+    transition: transform 0.2s ease;
+}
+
+.cl-nickname-section .inline-drawer-icon:not(.down) {
+    transform: rotate(180deg);
+}
+
+.cl-nickname-section .inline-drawer-content {
+    display: none;
+    margin-top: var(--space-xs);
+}
+
+.cl-nickname-section .inline-drawer-content.open {
+    display: block;
+}
+
+/* Level summary rows */
+.cl-nickname-section .nickname-levels .level-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: nowrap;
+    padding: 4px 0;
+    font-size: var(--font-sm);
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.cl-nickname-section .nickname-levels .level-row:last-child {
+    border-bottom: none;
+}
+
+.cl-nickname-section .nickname-levels .level-name {
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.cl-nickname-section .nickname-levels .level-value {
+    color: var(--text-primary);
+}
+
+.cl-nickname-section .nickname-levels .level-row.effective .level-value {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+/* ============================================ */
+/* Field Action Buttons (expand + Alt. in edit) */
+/* ============================================ */
+
+.form-group.expandable-field {
+    position: relative;
+}
+
+.field-action-buttons {
+    position: absolute;
+    top: 0;
+    right: 0;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    z-index: 2;
+    width: auto;
+    height: auto;
+}
+
+.field-action-buttons .expand-field-btn,
+.field-action-buttons .alt-field-btn {
+    position: relative;
+    top: auto;
+    right: auto;
+    left: auto;
+    bottom: auto;
+    float: none;
+}
+
+.alt-field-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 26px;
+    padding: 0 var(--btn-pad-h-sm);
+    font-size: var(--font-sm);
+    background: rgba(var(--accent-rgb), 0.15);
+    border: 1px solid rgba(var(--accent-rgb), 0.3);
+    border-radius: var(--radius-md);
+    color: var(--accent);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+}
+
+.alt-field-btn:hover {
+    background: rgba(var(--accent-rgb), 0.3);
+    border-color: var(--accent);
+    color: var(--text-primary);
+    box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.2);
+}
+
+.alt-field-btn.hidden {
+    display: none;
+}
+
+/* ============================================ */
+/* Alternate Descriptions Modal                 */
+/* ============================================ */
+
+#altDescriptionsModal .cl-modal-content {
+    max-width: calc(700px * var(--modal-scale, 1));
+}
+
+.alt-popup-intro {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+}
+
+.alt-popup-intro strong {
+    color: var(--accent);
+}
+
+/* Alt entry card — glassy panel matching .detail-collapsible */
+#altDescriptionsModal .alt-entry {
+    background: var(--card-bg);
+    border-radius: var(--radius-lg);
+    padding: var(--space-md);
+    border: 1px solid var(--glass-border);
+    margin-bottom: var(--space-sm);
+    transition: border-color 0.15s ease;
+}
+
+#altDescriptionsModal .alt-entry.active-field {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.2);
+}
+
+/* Top row: title + tokens + use + delete — one line */
+#altDescriptionsModal .alt-entry-top-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-xs);
+    flex-wrap: nowrap;
+}
+
+#altDescriptionsModal .alt-entry-title {
+    flex: 1 1 auto;
+    min-width: 60px;
+    padding: var(--space-xs) var(--space-sm);
+    font-size: var(--font-pre-base);
+    font-family: inherit;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+#altDescriptionsModal .alt-entry-title:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.2);
+}
+
+#altDescriptionsModal .alt-entry-tokens {
+    flex-shrink: 0;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    padding: 0 var(--space-xs);
+}
+
+#altDescriptionsModal .alt-entry-content {
+    display: block;
+    width: 100%;
+    margin-top: var(--space-xs);
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--font-pre-base);
+    font-family: inherit;
+    box-sizing: border-box;
+    resize: vertical;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    color: var(--text-primary);
+    outline: none;
+    line-height: 1.5;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+#altDescriptionsModal .alt-entry-content:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.2);
+}
+
+/* Use / Delete buttons — glassy style */
+#altDescriptionsModal .alt-use-btn,
+#altDescriptionsModal .alt-delete-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: var(--btn-pad-v-sm) var(--btn-pad-h-sm);
+    font-size: var(--font-sm);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+#altDescriptionsModal .alt-use-btn {
+    border-color: rgba(var(--accent-rgb), 0.3);
+    color: var(--accent);
+    background: rgba(var(--accent-rgb), 0.1);
+}
+
+#altDescriptionsModal .alt-use-btn:hover {
+    background: rgba(var(--accent-rgb), 0.2);
+    border-color: var(--accent);
+    box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.15);
+}
+
+#altDescriptionsModal .alt-use-btn.active {
+    border-color: var(--cl-success, #4caf50);
+    color: var(--cl-success, #4caf50);
+    background: rgba(var(--cl-success-rgb, 76, 175, 80), 0.12);
+    cursor: default;
+    opacity: 0.85;
+}
+
+#altDescriptionsModal .alt-delete-btn:hover {
+    background: rgba(var(--cl-error-bright-rgb, 231, 76, 60), 0.15);
+    border-color: var(--cl-error-bright, #e74c3c);
+    color: var(--cl-danger-text, #ff6b7a);
+}
+
+/* Alt field status banner (mirrors upstream AlternateDescriptions checkFieldStatus) */
+#altDescriptionsModal .alt-field-status {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin: var(--space-sm) 0;
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-md);
+    font-size: var(--font-sm);
+    border: 1px solid var(--glass-border);
+}
+
+#altDescriptionsModal .alt-field-status:empty {
+    display: none;
+}
+
+#altDescriptionsModal .alt-field-status--modified {
+    background: rgba(255, 193, 7, 0.1);
+    border-left: 3px solid #ffc107;
+    color: #ffc107;
+}
+
+#altDescriptionsModal .alt-field-status--ok {
+    background: rgba(76, 175, 80, 0.1);
+    border-left: 3px solid #4caf50;
+    color: #4caf50;
+}
+
+#altDescriptionsModal .alt-field-status .alt-save-current-btn {
+    margin-left: auto;
 }
 

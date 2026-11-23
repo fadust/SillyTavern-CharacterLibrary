@@ -61,7 +61,7 @@ if (!_isLinkedInstall) {
 const THUMB_QUALITY = 82;
 const THUMB_MAX_SIZE = 1024;
 // only types the loaded Jimp decoders handle; anything else 400s instead of decode-500ing
-const THUMB_EXTENSIONS = /\.(png|jpe?g|webp|gif)$/i;
+const THUMB_EXTENSIONS = /\.(png|jpe?g|webp|gif|bmp|avif|tiff?)$/i;
 const THUMB_CONCURRENCY = 2;
 const THUMB_MAX_FILE_BYTES = 50 * 1024 * 1024;   // 50 MB on-disk
 // PNG-only avatar route: the pixel cap is the real RAM gate, so a detailed tall avatar (legitimately >50 MB on disk) gets a higher byte pre-filter than the multi-format gallery route
@@ -654,7 +654,7 @@ async function handleBotbooruProxy(req, res) {
     if (bearer) headers['Authorization'] = bearer;
     // Only forward a body when the client actually sent one, so bodyless POSTs
     // (favorite toggle, follow) match the direct path exactly.
-    const hasBody = ['POST', 'PATCH'].includes(req.method)
+    const hasBody = ['POST', 'PUT', 'PATCH'].includes(req.method)
         && req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0;
     if (hasBody) headers['Content-Type'] = 'application/json';
 
@@ -756,6 +756,8 @@ const CT_ALLOWED_PATHS = [
     /^\/api\/search\/cards\b/,
     /^\/api\/character\/[^/]+\/[^/]+$/,
     /^\/api\/catalog\/top-tags$/,
+    /^\/search\/cards\/__data\.json$/,
+    /^\/character\/[^/]+\/[^/]+\/__data\.json$/,
 ];
 
 function registerCharacterTavernRoutes(router) {
@@ -810,8 +812,7 @@ function registerCharacterTavernRoutes(router) {
         }
 
         try {
-            // Search a term that returns both SFW and NSFW results when authenticated
-            const response = await fetch('https://character-tavern.com/api/search/cards?query=sara+lane&limit=5', {
+            const response = await fetch('https://character-tavern.com/search/cards/__data.json', {
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
                     'Accept': 'application/json',
@@ -820,16 +821,16 @@ function registerCharacterTavernRoutes(router) {
             });
 
             if (response.ok) {
-                const data = await response.json();
-                const hits = data?.hits || [];
-                // Authenticated sessions return NSFW results (isNSFW=true, contentWarnings populated)
-                const hasNsfw = hits.some(h => h.isNSFW === true);
+                const data = JSON.parse((await response.text()).split('\n')[0]);
+                const layout = data.nodes?.find(node => node?.data?.[0] && Object.hasOwn(node.data[0], 'user'))?.data;
+                if (!layout || !Number.isInteger(layout[0].user)) throw new Error('Unrecognized CharacterTavern session response');
+                const user = layout[layout[0].user];
                 
                 // Check if server rejected the cookie (by setting it to empty/expired)
                 const setCookie = response.headers.get('set-cookie');
                 const isRejected = setCookie && (setCookie.includes('session=;') || setCookie.includes('Max-Age=0'));
                 
-                if (isRejected) {
+                if (isRejected || user === null) {
                     console.warn('[cl-helper] CT session rejected (Set-Cookie deletion detected)');
                     ctSessionCookies = null; // Clear our invalid cookie
                     ctSessionExpires = null;
@@ -838,8 +839,8 @@ function registerCharacterTavernRoutes(router) {
                 }
 
                 captureCtExpiry(setCookie); // this authed request slid the window; snapshot the new expiry
-                console.log(`[cl-helper] CT validate: ${hits.length} hits, totalHits=${data?.totalHits}, hasNSFW=${hasNsfw}`);
-                res.json({ valid: true, hasNsfw, expires: ctSessionExpires });
+                if (!user || typeof user !== 'object') throw new Error('Unrecognized CharacterTavern user response');
+                res.json({ valid: true, expires: ctSessionExpires });
             } else if (response.status === 403) {
                 ctSessionCookies = null;
                 ctSessionExpires = null;
@@ -900,6 +901,9 @@ function registerCharacterTavernRoutes(router) {
         const headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'application/json',
+            // Avoid zstd here: Node/Bun support varies, while these encodings are
+            // supported by the byte-aware decoder below.
+            'Accept-Encoding': 'gzip, deflate, br',
         };
         if (ctSessionCookies) {
             headers['Cookie'] = ctSessionCookies;
@@ -915,16 +919,35 @@ function registerCharacterTavernRoutes(router) {
             captureCtExpiry(response.headers.get('set-cookie')); // browse calls slide the window too
 
             const contentType = response.headers.get('content-type') || '';
+            const contentEncoding = (response.headers.get('content-encoding') || '').toLowerCase();
+            let buffer = Buffer.from(await response.arrayBuffer());
+
+            // fetch implementations differ: some transparently decompress while
+            // retaining Content-Encoding, others expose the compressed bytes.
+            // Inspect the bytes first and fall back to the header; if decompression
+            // fails, the body was already decoded and is safe to forward unchanged.
+            const isGzip = buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b;
+            const isZlib = buffer.length >= 2 && buffer[0] === 0x78 && (((buffer[0] << 8) + buffer[1]) % 31 === 0);
+            const isZstd = buffer.length >= 4 && buffer[0] === 0x28 && buffer[1] === 0xb5 && buffer[2] === 0x2f && buffer[3] === 0xfd;
+            try {
+                if (isZstd || contentEncoding.includes('zstd')) {
+                    buffer = await getZstdDecompressAsync()(buffer, { maxOutputLength: SAUCEPAN_MAX_BYTES });
+                } else if (isGzip || contentEncoding.includes('gzip')) {
+                    buffer = await promisify(zlib.gunzip)(buffer);
+                } else if (isZlib || contentEncoding.includes('deflate')) {
+                    buffer = await promisify(zlib.inflate)(buffer);
+                } else if (contentEncoding.includes('br')) {
+                    buffer = await promisify(zlib.brotliDecompress)(buffer);
+                }
+            } catch {
+                // Already decompressed by fetch; keep the original bytes.
+            }
+
             res.status(response.status);
             res.set('Content-Type', contentType);
-
-            if (contentType.includes('application/json')) {
-                const text = await response.text();
-                res.send(text);
-            } else {
-                const buffer = Buffer.from(await response.arrayBuffer());
-                res.send(buffer);
-            }
+            res.removeHeader('Content-Encoding');
+            res.removeHeader('Content-Length');
+            res.send(buffer);
         } catch (err) {
             console.error('[cl-helper] CT proxy error:', err.message);
             res.status(502).json({ error: 'Failed to reach CharacterTavern' });
@@ -960,35 +983,19 @@ async function testDcToken(token) {
 
 // Read-only API paths forwarded by /dc-proxy.
 const DC_ALLOWED_PATHS = [
-    /^\/api\/characters\/fresh\b/,
-    /^\/api\/characters\/recent-public\b/,
+    /^\/api\/features$/,
+    /^\/api\/characters\/fresh$/,
+    /^\/api\/characters\/recent-public$/,
+    /^\/api\/characters\/recent-public\/[a-f0-9-]+$/,
     /^\/api\/characters\/[a-f0-9-]+$/,
-    /^\/api\/characters\/[a-f0-9-]+\/download\b/,
-    /^\/api\/creators\/[a-f0-9-]+$/,
-    /^\/api\/creators\/[a-f0-9-]+\/characters\b/,
-    /^\/api\/tags\/faceted\b/,
+    /^\/api\/characters\/[a-f0-9-]+\/download$/,
+    /^\/api\/creators\/(?:saucepan(?::|%3A))?[a-f0-9-]+$/i,
+    /^\/api\/creators\/(?:saucepan(?::|%3A))?[a-f0-9-]+\/characters$/i,
+    /^\/api\/profiles\/users\/[a-f0-9-]+(?:\/bots)?$/,
+    /^\/api\/tags\/faceted$/,
+    /^\/api\/retrieval\/(?:status-projection|status)$/,
     /^\/api\/extraction\/status-projection$/,
 ];
-
-// Resolve a usable public session ID for the extraction endpoint.
-async function getPublicSessionId(token) {
-    try {
-        const resp = await fetch(`${DATACAT_BASE}/api/users`, {
-            headers: dcHeaders(token),
-        });
-        if (!resp.ok) return null;
-        const data = await resp.json();
-        const publicUser = (data.users || []).find(u => u.isPublic);
-        if (!publicUser?.sessions) return null;
-        // Pick a non-background, logged_in session
-        const session = publicUser.sessions.find(
-            s => s.purpose !== 'BACKGROUND_SCRAPER' && s.status === 'logged_in'
-        );
-        return session?.id || null;
-    } catch {
-        return null;
-    }
-}
 
 function registerDataCatRoutes(router) {
     router.post('/dc-init', async (req, res) => {
@@ -1001,7 +1008,15 @@ function registerDataCatRoutes(router) {
                 if (check.ok) {
                     return res.json({ ok: true, cached: true, token: dcSessionToken });
                 }
-            } catch { /* fall through to create new */ }
+                // Restrictions and outages are not evidence that the token expired.
+                if (check.status !== 401) return res.json({ ok: false, reason: `Session check returned ${check.status}` });
+                const failure = await check.json();
+                const sessionError = [failure?.code, failure?.errorCode, failure?.error?.code, failure?.error?.message,
+                    typeof failure?.error === 'string' ? failure.error : '', failure?.message].filter(Boolean).join(' ');
+                if (!/(?:SESSION|TOKEN).*(?:INVALID|EXPIRED|REQUIRED|MISSING)|(?:INVALID|EXPIRED|MISSING|NO).*(?:SESSION|TOKEN)/i.test(sessionError)) {
+                    return res.json({ ok: false, reason: 'Authentication failed; the existing session was preserved' });
+                }
+            } catch (error) { return res.json({ ok: false, reason: 'Could not validate the existing DataCat session' }); }
             dcSessionToken = null;
         }
 
@@ -1109,6 +1124,9 @@ function registerDataCatRoutes(router) {
         let extractionKind = null;
         try {
             const parsed = new URL(url);
+            if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+                return res.status(400).json({ error: 'Invalid character URL' });
+            }
             const isJanitor = /^(www\.)?janitorai\.com$/i.test(parsed.hostname) || /^(www\.)?jannyai\.com$/i.test(parsed.hostname);
             const isSaucepan = /^(www\.)?saucepan\.ai$/i.test(parsed.hostname);
             if (!isJanitor && !isSaucepan) {
@@ -1129,16 +1147,10 @@ function registerDataCatRoutes(router) {
         const wantPublicFeed = req.body.publicFeed !== false;
         const alwaysReextract = req.body.alwaysReextract === true;
 
-        // Resolve a public session ID when public feed is requested
-        let sessionId = null;
-        if (wantPublicFeed) {
-            sessionId = await getPublicSessionId(dcSessionToken);
-        }
-
         try {
             let endpoint, body;
             if (extractionKind === 'saucepan') {
-                endpoint = `${DATACAT_BASE}/api/saucepan-extract/run`;
+                endpoint = `${DATACAT_BASE}/api/saucepan-retrieval/run`;
                 body = {
                     companion: url,
                     sourceKind: 'one_off',
@@ -1147,16 +1159,20 @@ function registerDataCatRoutes(router) {
                     extractHidden: false,
                     idempotencyKey: requestId,
                     alwaysReextract,
+                    appearOnPublicFeed: wantPublicFeed,
+                    publicFeedVisibilityIntent: wantPublicFeed,
+                    visibilityIntent: wantPublicFeed ? 'public' : 'mine',
                     vpnNamespace: 'general_scraper',
                     netnsRole: 'general_scraper',
                 };
             } else {
-                endpoint = `${DATACAT_BASE}/api/character/smart-extract-v2`;
+                endpoint = `${DATACAT_BASE}/api/character/retrieval-v2`;
                 body = {
                     url,
                     openLoginIfNoSession: true,
-                    sessionId,
-                    appearOnPublicFeed: wantPublicFeed && !!sessionId,
+                    appearOnPublicFeed: wantPublicFeed,
+                    publicFeedVisibilityIntent: wantPublicFeed,
+                    visibilityIntent: wantPublicFeed ? 'public' : 'mine',
                     useSeparateWorkerServer: true,
                     inlinePostExtractCreatorProfile: true,
                     idempotencyKey: requestId,
@@ -1175,8 +1191,25 @@ function registerDataCatRoutes(router) {
                 body: JSON.stringify(body),
             });
 
-            const data = await response.json();
-            res.status(response.status).json(data);
+            const responseText = await response.text();
+            let data;
+            try { data = JSON.parse(responseText); }
+            catch {
+                return res.status(response.ok ? 502 : response.status).json({ error: 'DataCat returned an invalid retrieval response', code: 'INVALID_RESPONSE' });
+            }
+            // Do not turn a malformed successful response into an apparently queued job
+            // simply by adding our locally generated correlation ID.
+            const fields = ['success', 'error', 'errorCode', 'requestId', 'request_id', 'idempotencyKey',
+                'status', 'state', 'phase', 'lifecycle', 'job', 'run', 'task', 'queued', 'started',
+                'alreadyExists', 'alreadyRetrieved', 'cached', 'skipped', 'skippedExtraction', 'reused', 'shortcut'];
+            if (!data || typeof data !== 'object' || Array.isArray(data) || (response.ok && !fields.some(key => Object.hasOwn(data, key)))) {
+                return res.status(response.ok ? 502 : response.status).json({ error: 'DataCat returned an invalid retrieval response', code: 'INVALID_RESPONSE' });
+            }
+            const job = data.job || data.run || data.task;
+            const upstreamRequestId = data.requestId || data.request_id || data.idempotencyKey
+                || job?.requestId || job?.request_id || job?.idempotencyKey || job?.id;
+            // Preserve upstream classifications and request aliases before using our sent ID.
+            res.status(response.status).json({ ...data, requestId: upstreamRequestId || requestId });
         } catch (err) {
             console.error('[cl-helper] DC extract error:', err.message);
             res.status(502).json({ error: 'Failed to reach DataCat' });
@@ -1184,10 +1217,6 @@ function registerDataCatRoutes(router) {
     });
 
     router.get('/dc-proxy/*', async (req, res) => {
-        if (!dcSessionToken) {
-            return res.status(401).json({ error: 'No DataCat session token configured' });
-        }
-
         const targetPath = '/' + req.params[0];
 
         const normalizedPath = new URL(targetPath, DATACAT_BASE).pathname;
@@ -1199,20 +1228,24 @@ function registerDataCatRoutes(router) {
         const targetUrl = new URL(targetPath, DATACAT_BASE);
         targetUrl.search = new URL(req.url, 'http://localhost').search;
 
-        if (targetUrl.hostname !== 'datacat.run') {
+        if (targetUrl.origin !== DATACAT_BASE) {
             return res.status(403).json({ error: 'Proxy target must be datacat.run' });
         }
 
         try {
             const response = await fetch(targetUrl.toString(), {
                 method: 'GET',
-                headers: dcHeaders(dcSessionToken),
-                redirect: 'follow',
+                headers: dcSessionToken ? dcHeaders(dcSessionToken) : Object.fromEntries(Object.entries(dcHeaders('')).filter(([key]) => key !== 'X-Session-Token')),
+                redirect: 'manual',
             });
 
             const contentType = response.headers.get('content-type') || '';
             res.status(response.status);
             res.set('Content-Type', contentType);
+            for (const name of ['retry-after', 'cache-control']) {
+                const value = response.headers.get(name);
+                if (value) res.set(name, value);
+            }
 
             if (contentType.includes('application/json')) {
                 res.send(await response.text());
@@ -1666,10 +1699,16 @@ const SAUCEPAN_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 const SAUCEPAN_MAX_BYTES = 10 * 1024 * 1024;
 const SAUCEPAN_ALLOWED_PATHS = [
     /^\/api\/v1\/search$/,
+    /^\/api\/v1\/companions-of-user$/,
+    /^\/api\/v1\/companion$/,
+    /^\/api\/v1\/companion\/definition$/,
+    /^\/api\/v1\/companions\/[^/]+\/lorebooks$/,
     /^\/api\/v1\/fandoms$/,
     /^\/api\/v2\/users\/[A-Za-z0-9_.-]+\/companions$/,
-    /^\/api\/v2\/companions\/[a-zA-Z0-9-]+$/,
-    /^\/api\/v1\/companion\/definition$/,
+    /^\/api\/v2\/companions\/[^/]+$/,
+    /^\/api\/v2\/companions\/[^/]+\/lorebooks$/,
+    /^\/api\/v2\/lorebooks\/[^/]+\/chapters$/,
+    /^\/api\/v2\/lorebooks\/[^/]+\/chapters\/[^/]+$/,
     /^\/cdn\/.+$/,
 ];
 const SAUCEPAN_POST_PATH = '/api/v1/search';
@@ -1786,6 +1825,61 @@ async function readSaucepanBody(response) {
     return text;
 }
 
+// Saucepan ships companion definitions as a shuffled fragment list padded
+// with decoy fragments, to frustrate naive scrapers (a plain text-join yields
+// garbled prose). Each real fragment carries a `proof` hash; decoys don't
+// validate. Reassembly (ported verbatim from Saucepan's own web bundle):
+//   1. keep only fragments whose proof matches hash(mask, key^mask, text)
+//   2. order the survivors by (key ^ mask) ascending
+//   3. concatenate their text
+// The hash is FNV-1a over the UTF-8 text, seeded from the mask and derived key.
+const SAUCEPAN_FNV_OFFSET = 2166136261;
+const SAUCEPAN_FNV_PRIME = 16777619;
+
+function saucepanRotl(value, bits) {
+    return ((value << bits) | (value >>> (32 - bits))) >>> 0;
+}
+
+function saucepanFragmentHash(mask, derivedKey, text) {
+    const bytes = new TextEncoder().encode(text);
+    let h = (SAUCEPAN_FNV_OFFSET ^ saucepanRotl(mask, 7) ^ saucepanRotl(derivedKey, 13)) >>> 0;
+    for (const b of bytes) {
+        h ^= b;
+        h = Math.imul(h, SAUCEPAN_FNV_PRIME) >>> 0;
+    }
+    return h >>> 0;
+}
+
+function assembleSaucepanFragments(content) {
+    const fragments = Array.isArray(content?.fragments) ? content.fragments : [];
+    const mask = (content?.mask ?? 0) >>> 0;
+    return fragments
+        .filter(f => {
+            if (!f || typeof f.text !== 'string') return false;
+            const derivedKey = (f.key ^ mask) >>> 0;
+            return saucepanFragmentHash(mask, derivedKey, f.text) === (f.proof >>> 0);
+        })
+        .sort((a, b) => ((a.key ^ mask) >>> 0) - ((b.key ^ mask) >>> 0))
+        .map(f => f.text)
+        .join('');
+}
+
+// GET a Saucepan JSON endpoint with auth, decoding the (possibly zstd) body.
+// Returns { ok, status, data } with data === null on non-JSON responses.
+async function fetchSaucepanJson(path, token, companionId) {
+    const response = await fetch(`${SAUCEPAN_BASE}${path}`, {
+        method: 'GET',
+        headers: {
+            ...saucepanHeaders(token),
+            Referer: `${SAUCEPAN_ORIGIN}/companion/${companionId}`,
+        },
+    });
+    const text = await readSaucepanBody(response);
+    let data = null;
+    try { data = JSON.parse(text); } catch { /* leave null */ }
+    return { ok: response.ok, status: response.status, data };
+}
+
 function registerSaucepanRoutes(router) {
     // Saucepan auth: password login
     router.post('/saucepan-login', async (req, res) => {
@@ -1817,10 +1911,9 @@ function registerSaucepanRoutes(router) {
                 return res.status(response.status).json({ ok: false, error: msg });
             }
 
-            // the login response body carries exactly { token }; a missing key is a platform change
-            const token = data?.token;
+            const token = data?.token || data?.access_token || data?.session_token || data?.sessionToken;
             if (!token) {
-                return res.status(502).json({ ok: false, error: 'Login response carried no token' });
+                return res.status(502).json({ ok: false, error: 'Login succeeded but no token was returned' });
             }
 
             saucepanToken = token;
@@ -2038,6 +2131,13 @@ const CDP_NAV_TIMEOUT = 60000;
 const COMPOSER_WAIT_TRIES = 120;
 const JANITORAI_ORIGIN = 'https://janitorai.com';
 const JANITORAI_UUID_RE = /^[a-f0-9-]{36}$/i;
+// JannyAI keeps a card's definition and greeting inside the HTML document, and Cloudflare
+// answers a bare XHR for that document with 403 regardless of whose clearance cookie it
+// carries. Measured on a real card: userscript bridge 403, corsproxy.io 401, SillyTavern's
+// proxy 403. A genuine navigation in a real browser clears the same page in ~15s, so the
+// browser endpoint that already backs JanitorAI is the only transport that works here.
+const JANNYAI_ORIGIN = 'https://jannyai.com';
+const JANNY_CHARACTER_PATH_RE = /^\/characters\/[a-f0-9-]{8,64}(_[\w-]+)?\/?$/i;
 
 function cdpHttpBase(endpoint) {
     if (typeof endpoint !== 'string' || !endpoint.trim()) throw new Error('Browser endpoint is required');
@@ -3355,6 +3455,42 @@ function registerJanitoraiBrowserRoutes(router) {
         }
     });
 
+    // Returns one JannyAI character page's HTML. Deliberately narrow: GET only, one origin, and
+    // only character paths, so this cannot become a general-purpose request forwarder.
+    router.post('/janny-browser-page', async (req, res) => {
+        const { url } = req.body ?? {};
+        if (typeof url !== 'string' || url.length > 2048) {
+            return res.status(400).json({ error: 'url must be a JannyAI character url' });
+        }
+        // Normalize before trusting it: a raw prefix test accepts ../ and credentials in the host.
+        let target;
+        try {
+            const u = new URL(url);
+            if (u.origin !== JANNYAI_ORIGIN || !JANNY_CHARACTER_PATH_RE.test(u.pathname)) {
+                return res.status(403).json({ error: 'url must be a jannyai.com character page' });
+            }
+            target = u.origin + u.pathname;
+        } catch {
+            return res.status(400).json({ error: 'Malformed url' });
+        }
+
+        try {
+            const endpoint = await resolveBrowserEndpoint(req);
+            // A dedicated page, not the warm one: that page is parked on janitorai.com and
+            // navigating it away would break every in-flight browse request sharing it.
+            const html = await withJanitoraiPage(endpoint, async (page) => {
+                await page.goto(target, { timeout: CDP_NAV_TIMEOUT });
+                await waitForCloudflare(page);
+                return String(await page.evaluate('document.documentElement.outerHTML') || '');
+            });
+            if (!html) return res.status(502).json({ ok: false, error: 'Empty document' });
+            res.json({ ok: true, status: 200, body: html });
+        } catch (err) {
+            console.warn('[cl-helper] JannyAI browser page fetch failed:', err.message);
+            res.status(502).json({ ok: false, error: err.message });
+        }
+    });
+
     // Recovers one character's definition. Public definitions come straight off the detail
     // response; withheld ones are reconstructed from the prompt JanitorAI itself builds when a
     // chat message is sent, captured off the wire. Account settings are snapshotted and put back.
@@ -4507,6 +4643,160 @@ export async function init(router) {
         }
     });
 
+// FlareSolverr: thin POST forwarder for Cloudflare-protected endpoints
+// =============================================================================
+//
+// FlareSolverr (https://github.com/FlareSolverr/FlareSolverr) is a user-run
+// service that uses a real Chromium instance to bypass Cloudflare bot
+// challenges. It does not emit CORS headers by default, so the browser
+// cannot call it directly - we forward the request through here.
+//
+// This route is a stateless thin POST forwarder. The caller supplies both
+// the FlareSolverr endpoint URL and the target URL. We do not store the
+// FlareSolverr URL server-side; it is always provided per-request.
+
+const FLARESOLVERR_MAX_TARGET_LENGTH = 1024;
+const FLARESOLVERR_TIMEOUT_MS = 90_000;
+
+// Allowlist of upstreams FlareSolverr is allowed to fetch on behalf of CL.
+// Matches the hostname-plus-path-regex pattern used by other cl-helper proxies.
+const FLARESOLVERR_TARGET_ALLOWLIST = [
+    { hostname: 'janitorai.com', pathPattern: /^\/hampter\/characters\/?$/ },
+];
+
+function validateFlareTargetUrl(url) {
+    let parsed;
+    try { parsed = new URL(url); } catch { return false; }
+    if (!/^https?:$/.test(parsed.protocol)) return false;
+    return FLARESOLVERR_TARGET_ALLOWLIST.some(({ hostname, pathPattern }) =>
+        parsed.hostname === hostname && pathPattern.test(parsed.pathname)
+    );
+}
+
+function validateFlareUrl(flareUrl) {
+    if (!flareUrl || typeof flareUrl !== 'string' || flareUrl.length > 256) {
+        return { error: 'flareUrl is required' };
+    }
+    let parsed;
+    try { parsed = new URL(flareUrl); } catch { return { error: 'Invalid flareUrl' }; }
+    if (!/^https?:$/.test(parsed.protocol)) {
+        return { error: 'flareUrl must be http or https' };
+    }
+    return { url: parsed.toString() };
+}
+
+async function postToFlareSolverr(flareUrl, body) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FLARESOLVERR_TIMEOUT_MS + 5000);
+    try {
+        const response = await fetch(flareUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+        });
+        clearTimeout(timer);
+        const data = await response.json().catch(() => null);
+        return { response, data };
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function registerFlareSolverrRoutes(router) {
+    router.post('/flaresolverr-fetch', async (req, res) => {
+        const { flareUrl, targetUrl, sessionId } = req.body ?? {};
+
+        const flareCheck = validateFlareUrl(flareUrl);
+        if (flareCheck.error) return res.status(400).json({ error: flareCheck.error });
+
+        if (!targetUrl || typeof targetUrl !== 'string') {
+            return res.status(400).json({ error: 'targetUrl is required' });
+        }
+        if (targetUrl.length > FLARESOLVERR_MAX_TARGET_LENGTH) {
+            return res.status(400).json({ error: 'targetUrl too long' });
+        }
+        if (!validateFlareTargetUrl(targetUrl)) {
+            return res.status(403).json({ error: 'targetUrl not in allowlist' });
+        }
+
+        const body = {
+            cmd: 'request.get',
+            url: targetUrl,
+            maxTimeout: FLARESOLVERR_TIMEOUT_MS,
+        };
+        if (sessionId && typeof sessionId === 'string' && sessionId.length <= 128) {
+            body.session = sessionId;
+        }
+
+        try {
+            const { response, data } = await postToFlareSolverr(flareCheck.url, body);
+            if (!data) {
+                return res.status(502).json({ error: 'FlareSolverr returned non-JSON response' });
+            }
+            res.status(response.ok ? 200 : 502).json(data);
+        } catch (err) {
+            console.error('[cl-helper] FlareSolverr forward error:', err.message);
+            const message = err.name === 'AbortError'
+                ? 'FlareSolverr timed out'
+                : `Failed to reach FlareSolverr: ${err.message}`;
+            res.status(502).json({ error: message });
+        }
+    });
+
+    router.post('/flaresolverr-session-create', async (req, res) => {
+        const { flareUrl, sessionId } = req.body ?? {};
+        const flareCheck = validateFlareUrl(flareUrl);
+        if (flareCheck.error) return res.status(400).json({ error: flareCheck.error });
+
+        const body = { cmd: 'sessions.create' };
+        if (sessionId && typeof sessionId === 'string' && sessionId.length <= 128) {
+            body.session = sessionId;
+        }
+
+        try {
+            const { response, data } = await postToFlareSolverr(flareCheck.url, body);
+            if (!data) {
+                return res.status(502).json({ error: 'FlareSolverr returned non-JSON response' });
+            }
+            res.status(response.ok ? 200 : 502).json(data);
+        } catch (err) {
+            console.error('[cl-helper] FlareSolverr session-create error:', err.message);
+            const message = err.name === 'AbortError'
+                ? 'FlareSolverr timed out'
+                : `Failed to reach FlareSolverr: ${err.message}`;
+            res.status(502).json({ error: message });
+        }
+    });
+
+    router.post('/flaresolverr-session-destroy', async (req, res) => {
+        const { flareUrl, sessionId } = req.body ?? {};
+        const flareCheck = validateFlareUrl(flareUrl);
+        if (flareCheck.error) return res.status(400).json({ error: flareCheck.error });
+
+        if (!sessionId || typeof sessionId !== 'string' || sessionId.length > 128) {
+            return res.status(400).json({ error: 'sessionId is required' });
+        }
+
+        try {
+            const { response, data } = await postToFlareSolverr(flareCheck.url, {
+                cmd: 'sessions.destroy',
+                session: sessionId,
+            });
+            if (!data) {
+                return res.status(502).json({ error: 'FlareSolverr returned non-JSON response' });
+            }
+            res.status(response.ok ? 200 : 502).json(data);
+        } catch (err) {
+            console.error('[cl-helper] FlareSolverr session-destroy error:', err.message);
+            const message = err.name === 'AbortError'
+                ? 'FlareSolverr timed out'
+                : `Failed to reach FlareSolverr: ${err.message}`;
+            res.status(502).json({ error: message });
+        }
+    });
+}
+
     registerThumbnailRoutes(router);
     registerPygmalionRoutes(router);
     registerBotbooruRoutes(router);
@@ -4516,6 +4806,7 @@ export async function init(router) {
     registerCivitaiRoutes(router);
     registerPixivRoutes(router);
     registerSaucepanRoutes(router);
+    registerFlareSolverrRoutes(router);
     registerDropboxRoutes(router);
     registerJanitoraiBrowserRoutes(router);
 

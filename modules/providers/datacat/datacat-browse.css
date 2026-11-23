@@ -3,6 +3,13 @@
    Extracted from library.css
    ============================================ */
 
+#datacatSelectedTags{display:flex;gap:5px;flex-wrap:wrap;padding:4px 8px;max-height:110px;overflow:auto}
+.dc-tag-chip{border:1px solid var(--glass-border);border-radius:5px;padding:4px 7px;background:var(--bg-secondary);color:var(--text-primary);cursor:pointer;font:inherit;font-size:var(--font-xs)}
+.dc-tag-chip.include{border-color:#55b976;color:#7dde9e}.dc-tag-chip.exclude{border-color:#cf6870;color:#ff9299}
+.dc-tag-help{font-size:var(--font-xs);color:var(--text-secondary);padding:4px 8px;margin:3px 0}
+#datacatTagsList .tag-label{flex:1;min-width:0}#datacatTagsList .tag-count{font-size:var(--font-xs);color:var(--text-secondary);margin-left:8px}
+#datacatTagsMoreBtn[hidden]{display:none}
+
 /* Source badges (JanitorAI / Saucepan) on browse cards.
    Letter glyphs (J / S) instead of icons for instant recognition.
    Positioned top-left so they don't compete with the In Library /
@@ -509,3 +516,26 @@ html.cl-mobile .datacat-restore-name { font-size: var(--font-sm); }
     transition: width 0.2s ease;
 }
 .datacat-restore-actions { display: flex; gap: var(--space-sm); justify-content: flex-end; flex: 1; }
+
+.datacat-definition-selector {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+}
+.datacat-definition-selector label { font-weight: 600; }
+.datacat-definition-selector select {
+    min-width: 150px;
+    max-width: 100%;
+    padding: var(--space-sm);
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+.datacat-definition-hint {
+    flex-basis: 100%;
+    margin: 0;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+}

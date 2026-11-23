@@ -13,6 +13,7 @@ let isInitialized = false;
 let currentImages = [];
 let currentIndex = 0;
 let currentCharacter = null;
+let galleryLoadGeneration = 0;
 let currentZoom = 1;
 let panX = 0;
 let panY = 0;
@@ -74,6 +75,7 @@ export async function openViewer(char, startIndex = 0) {
         return;
     }
     
+    const generation = ++galleryLoadGeneration;
     currentCharacter = char;
     currentImages = [];
     currentIndex = 0;
@@ -95,7 +97,8 @@ export async function openViewer(char, startIndex = 0) {
     
     // Fetch gallery images
     try {
-        const images = await fetchGalleryImages(char);
+        const images = await fetchGalleryImages(char, generation);
+        if (generation !== galleryLoadGeneration) return;
         currentImages = images;
         
         loader?.classList.add('hidden');
@@ -114,6 +117,7 @@ export async function openViewer(char, startIndex = 0) {
         showImage(validIndex);
         
     } catch (err) {
+        if (generation !== galleryLoadGeneration) return;
         console.error('[GalleryViewer] Failed to load gallery:', err);
         loader?.classList.add('hidden');
         emptyState?.classList.remove('hidden');
@@ -127,6 +131,7 @@ export function openViewerWithImages(images, startIndex = 0, title = 'Gallery', 
         return;
     }
     
+    galleryLoadGeneration++;
     currentCharacter = null;
     currentImages = images;
     currentIndex = 0;
@@ -159,6 +164,7 @@ export function openViewerWithImages(images, startIndex = 0, title = 'Gallery', 
 }
 
 export function closeViewer() {
+    galleryLoadGeneration++;
     const modal = document.getElementById('galleryViewerModal');
     const videoEl = document.getElementById('galleryViewerVideo');
     
@@ -210,7 +216,7 @@ export function closeViewer() {
     _lastNavDirection = 1;
 }
 
-async function fetchGalleryImages(char) {
+async function fetchGalleryImages(char, generation) {
     const folderName = CoreAPI.getGalleryFolderName(char);
     
     debugLog('[GalleryViewer] Fetching images for folder:', folderName);
@@ -233,7 +239,7 @@ async function fetchGalleryImages(char) {
     );
     
     const safeFolderName = CoreAPI.sanitizeFolderName(folderName);
-    _currentFolder = safeFolderName;
+    if (generation === galleryLoadGeneration) _currentFolder = safeFolderName;
 
     return mediaFiles.map(fileName => {
         const isVideoFile = fileName.match(/\.(mp4|webm|mov|avi|mkv|m4v)$/i);
@@ -388,7 +394,16 @@ function showImage(index) {
             imgEl.style.display = 'block';
             imgEl.classList.toggle('is-gif', currentMediaIsGif);
             imgEl.onload = () => _hidePlaceholder();
-            imgEl.onerror = () => _hidePlaceholder();
+            imgEl.onerror = () => {
+                // The gallery strips a CDN's size cap to get the original; hosts that sign those
+                // params reject the stripped url, so retry once with what the card embedded.
+                if (media.fallbackUrl && imgEl.dataset.fellBack !== String(index)) {
+                    imgEl.dataset.fellBack = String(index);
+                    imgEl.src = media.fallbackUrl;
+                    return;
+                }
+                _hidePlaceholder();
+            };
             imgEl.src = media.url;
             imgEl.alt = media.name;
             if (imgEl.complete) _hidePlaceholder();
@@ -589,6 +604,9 @@ function measureThumbStride(strip) {
 
 function _getThumbUrl(media) {
     if (!_currentFolder || isVideo(media) || isGif(media)) return null;
+    // A card's remote media has no file on disk, so cl-helper has nothing to thumbnail and the
+    // request 404s; the strip must fall back to the source url instead of a broken thumb.
+    if (/^https?:\/\//i.test(media?.url || '')) return null;
     // only types cl-helper's Jimp can actually decode; extensionless names (the synthesized avatar entry) would 400 per open
     if (!/\.(png|jpe?g|webp)$/i.test(media.name || '')) return null;
     return CoreAPI.getGalleryThumbUrl(_currentFolder, media.name);

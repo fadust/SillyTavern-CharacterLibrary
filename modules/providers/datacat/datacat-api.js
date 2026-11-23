@@ -6,6 +6,10 @@ import CoreAPI from '../../core-api.js';
 import { CL_HELPER_PLUGIN_BASE, slugify, stripHtml, readJsonClassified, classifyErrorPage } from '../provider-utils.js';
 import { meiliMultiSearch, TAG_MAP as JANNY_TAG_MAP } from '../janny/janny-api.js';
 import { isJanitorBridgeAvailable, janitorBridgeFetch } from '../janitor-bridge.js';
+import { DatacatError, classifyDatacatError, normalizeDatacatCharacter, normalizeDatacatPage,
+    normalizeDatacatSourceKind, getDatacatSourceKind, getDatacatCharacterId,
+    normalizeDatacatAvatar, normalizeDefinitionSource, normalizeRetrievalStatus } from './datacat-contract.js';
+export * from './datacat-contract.js';
 
 export { slugify, stripHtml, JANNY_TAG_MAP };
 
@@ -55,17 +59,23 @@ export function resolveDatacatAvatarUrl(hit, opts = {}) {
     // guard on the v2 candidates skips ST's 'none' convention and bare filenames. Listing rows
     // carry none of the extra fields and fall through to hit.avatar, ie. todays behavior.
     const absOnly = (c) => (typeof c === 'string' && /^https?:\/\//i.test(c) ? c : null);
+    const normalized = normalizeDatacatCharacter(hit);
+    const asset = normalized?.media_assets?.find?.(item => String(item?.role || '').toLowerCase() === 'avatar') || normalized?.media_assets?.[0];
     const candidates = opts.preferOriginal
         ? [
-            absOnly(hit?.chara_card_v2_json?.data?.avatar),
+            normalized?.avatar_self_archive_url,
+            asset?.originalUrl || asset?.original_url || asset?.mediaViewUrl || asset?.media_view_url || asset?.url,
+            normalized?.avatar_variant_urls?.original,
+            absOnly(normalized?.chara_card_v2_json?.data?.avatar),
             absOnly(hit?.content_variants?.[0]?.content?.chara_card_v2_json?.data?.avatar),
-            hit?.avatar_variant_urls?.hero || hit?.avatarVariantUrls?.hero,
-            hit?.avatar,
+            normalized?.avatar_variant_urls?.hero,
+            normalized?.avatar,
         ]
-        : [hit?.avatar];
+        : [normalized?.avatar];
     for (const avatar of candidates) {
         if (!avatar || typeof avatar !== 'string') continue;
-        let url = /^https?:\/\//i.test(avatar) ? avatar : `${DATACAT_JANITOR_IMAGE_BASE}${avatar}`;
+        let url = normalizeDatacatAvatar(avatar, getDatacatSourceKind(hit));
+        if (!url) continue;
         const safety = CoreAPI.isUrlSafeForDownload(url);
         if (!safety.ok) continue;
         // Grid cards pass a width to pull a thumbnail: janitorai's raw bot-avatars are full-size
@@ -129,16 +139,23 @@ async function tryBootstrapSession() {
 
 /**
  * Fetch a DataCat API path through the cl-helper plugin proxy.
- * On 401/403, attempts to bootstrap a session once and retries.
+ * On a confirmed session failure, attempts to bootstrap a session once and retries.
  * @param {string} apiPath - Path relative to datacat.run (e.g. /api/characters/recent-public?...)
  * @returns {Promise<Response>}
  */
-async function dcFetch(apiPath) {
+async function dcFetch(apiPath, options = {}) {
     if (!_apiRequest) throw new Error('DataCat: apiRequest not bound (cl-helper required)');
-    let resp = await _apiRequest(`${DC_PROXY_BASE}${apiPath}`);
-    if (resp.status === 401 || resp.status === 403) {
-        if (await tryBootstrapSession()) {
-            resp = await _apiRequest(`${DC_PROXY_BASE}${apiPath}`);
+    options.signal?.throwIfAborted();
+    let resp = await _apiRequest(`${DC_PROXY_BASE}${apiPath}`, 'GET', null, { signal: options.signal });
+    options.signal?.throwIfAborted();
+    // A browser verification or creator-policy 403 cannot be repaired by replacing a session.
+    if (resp.status === 401) {
+        let payload;
+        try { payload = await resp.clone().json(); } catch (error) { if (error.name === 'AbortError') throw error; }
+        options.signal?.throwIfAborted();
+        if (classifyDatacatError(resp.status, payload).code === 'session_required' && await tryBootstrapSession()) {
+            options.signal?.throwIfAborted();
+            resp = await _apiRequest(`${DC_PROXY_BASE}${apiPath}`, 'GET', null, { signal: options.signal });
         }
     }
     if (!resp.ok) {
@@ -147,6 +164,35 @@ async function dcFetch(apiPath) {
         console.warn(`[DataCat] dcFetch ${resp.status} for ${apiPath}`, body.slice(0, 500));
     }
     return resp;
+}
+
+async function readDcJson(response, { allow404 = false } = {}) {
+    // Read once so an HTML challenge/maintenance page cannot masquerade as a missing card.
+    const text = await response.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch {
+        if (/Attention Required! \| Cloudflare|cf-error-details|Just a moment|__cf_chl/i.test(text.slice(0, 2000))) {
+            throw new DatacatError('DataCat requires browser verification. Open DataCat in your browser and retry.', { code: 'verification_required', status: response.status });
+        }
+        if (allow404 && response.status === 404 && /^not found[.!]?$/i.test(text.trim())) return null;
+        if (!response.ok && response.status !== 404) throw classifyDatacatError(response.status, null);
+        throw new DatacatError('DataCat returned an invalid JSON response', { code: 'invalid_response', status: response.status });
+    }
+    if (!response.ok) {
+        const error = classifyDatacatError(response.status, data);
+        if (allow404 && error.code === 'not_found') return null;
+        throw error;
+    }
+    if (data?.success === false || data?.error) throw classifyDatacatError(response.status, data);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new DatacatError('DataCat returned an invalid JSON response', { code: 'invalid_response', status: response.status });
+    }
+    return data;
+}
+
+export async function fetchDatacatFeatures(options = {}) {
+    return readDcJson(await dcFetch('/api/features', options));
 }
 
 /**
@@ -372,18 +418,22 @@ export async function janitoraiVerifyToken(accessToken) {
  * @param {'janitor'|'saucepan'|null} [sourceKind] - upstream source hint; required for freshly-extracted chars
  * @returns {Promise<Object|null>} character object or null
  */
-export async function fetchDatacatCharacter(characterId, sourceKind = null) {
+export async function fetchDatacatCharacter(characterId, sourceKind = null, options = {}) {
     if (!characterId) return null;
-    try {
-        const qs = sourceKind ? `?sourceKind=${encodeURIComponent(sourceKind)}` : '';
-        const response = await dcFetch(`/api/characters/${characterId}${qs}`);
-        if (!response.ok) return null;
-        const data = await response.json();
-        return data?.character || null;
-    } catch (e) {
-        console.error('[DataCat] fetchDatacatCharacter failed:', characterId, e);
-        return null;
+    const id = encodeURIComponent(characterId);
+    const source = normalizeDatacatSourceKind(sourceKind);
+    const paths = source ? [`/api/characters/${id}?sourceKind=${source}`, `/api/characters/${id}`] : [`/api/characters/${id}`];
+    paths.push(`/api/characters/recent-public/${id}`);
+    for (const path of paths) {
+        const data = await readDcJson(await dcFetch(path, options), { allow404: true });
+        if (data === null) continue;
+        const character = normalizeDatacatCharacter(data.character || (getDatacatCharacterId(data) ? data : null));
+        if (!character || getDatacatCharacterId(character) !== getDatacatCharacterId(characterId)) {
+            throw new DatacatError('DataCat returned invalid or mismatched character metadata', { code: 'invalid_response' });
+        }
+        return character;
     }
+    return null;
 }
 
 /**
@@ -392,18 +442,17 @@ export async function fetchDatacatCharacter(characterId, sourceKind = null) {
  * @param {'janitor'|'saucepan'|null} [sourceKind] - upstream source hint
  * @returns {Promise<Object|null>} { data: { name, tags, avatar, ... } }
  */
-export async function fetchDatacatDownload(characterId, sourceKind = null) {
+export async function fetchDatacatDownload(characterId, sourceKind = null, options = {}) {
     if (!characterId) return null;
-    try {
-        const params = new URLSearchParams({ t: String(Date.now()) });
-        if (sourceKind) params.set('sourceKind', sourceKind);
-        const response = await dcFetch(`/api/characters/${characterId}/download?${params.toString()}`);
-        if (!response.ok) return null;
-        return response.json();
-    } catch (e) {
-        console.error('[DataCat] fetchDatacatDownload failed:', characterId, e);
-        return null;
+    const params = new URLSearchParams({ t: String(Date.now()), downloadFormat: 'json', definitionSource: normalizeDefinitionSource(options.definitionSource) });
+    const source = normalizeDatacatSourceKind(sourceKind);
+    if (source) params.set('sourceKind', source);
+    if (options.variantId) params.set('variant', options.variantId);
+    const data = await readDcJson(await dcFetch(`/api/characters/${encodeURIComponent(characterId)}/download?${params}`, options), { allow404: true });
+    if (data !== null && (!data?.data || typeof data.data !== 'object' || Array.isArray(data.data) || typeof data.data.name !== 'string')) {
+        throw new DatacatError('DataCat returned an invalid exported card', { code: 'invalid_response' });
     }
+    return data;
 }
 
 /**
@@ -411,17 +460,18 @@ export async function fetchDatacatDownload(characterId, sourceKind = null) {
  * @param {string} creatorId - UUID
  * @returns {Promise<Object|null>}
  */
-export async function fetchDatacatCreator(creatorId) {
+export async function fetchDatacatCreator(creatorId, opts = {}) {
     if (!creatorId) return null;
-    try {
-        const response = await dcFetch(`/api/creators/${creatorId}`);
-        if (!response.ok) return null;
-        const data = await response.json();
-        return data?.creator || null;
-    } catch (e) {
-        console.error('[DataCat] fetchDatacatCreator failed:', creatorId, e);
-        return null;
-    }
+    const source = normalizeDatacatSourceKind(opts.sourceKind);
+    const path = source === 'direct_upload' ? `/api/profiles/users/${encodeURIComponent(creatorId)}` : `/api/creators/${encodeURIComponent(creatorId)}`;
+    const data = await readDcJson(await dcFetch(path, opts), { allow404: true });
+    if (data === null) return null;
+    const creator = data.creator || data.user || data.profile || data;
+    return { ...creator,
+        id: creator.id || creator.uuid || creatorId,
+        name: creator.name || creator.displayName || creator.display_name || creator.username || '',
+        avatar: creator.avatar || creator.avatarUrl || creator.avatar_url || null,
+    };
 }
 
 /**
@@ -436,9 +486,15 @@ export async function fetchDatacatCreator(creatorId) {
 export async function fetchDatacatCreatorCharacters(creatorId, opts = {}) {
     if (!creatorId) return null;
     const { limit = 24, offset = 0, sortBy = 'chat_count' } = opts;
-    const response = await dcFetch(`/api/creators/${creatorId}/characters?limit=${limit}&offset=${offset}&sortBy=${sortBy}`);
-    const data = await readJsonClassified(response);
-    return { total: data.total || 0, list: data.list || [] };
+    const direct = normalizeDatacatSourceKind(opts.sourceKind) === 'direct_upload';
+    const sort = ['fresh', 'created_at', 'createdAt', 'newest', 'latest', 'creation_date'].includes(sortBy) ? (direct ? 'latest' : 'creation_date') : sortBy;
+    const params = new URLSearchParams({ limit, offset });
+    if (direct) params.set('sort', sort);
+    else { params.set('order', sort); params.set('sortBy', sort); params.set('sortDir', 'desc'); }
+    const path = direct ? `/api/profiles/users/${encodeURIComponent(creatorId)}/bots` : `/api/creators/${encodeURIComponent(creatorId)}/characters`;
+    const data = await readDcJson(await dcFetch(`${path}?${params}`, opts));
+    const page = normalizeDatacatPage(data, { limit, offset, listKey: 'list' });
+    return { ...page, pagination: { total: page.total, hasMore: page.hasMore, nextOffset: page.nextOffset } };
 }
 
 // ========================================
@@ -452,19 +508,31 @@ export async function fetchDatacatCreatorCharacters(creatorId, opts = {}) {
  * @param {number} [opts.offset=0]
  * @param {number[]} [opts.tagIds] - Active tag ID filters
  * @param {string} [opts.search] - Full text search (matches character AND creator names)
- * @param {string} [opts.sortBy] - Result order; the endpoint honors only 'score' (verified live)
+ * @param {string} [opts.sortBy] - fresh, score, chat_count, messages_per_chat, first_published
  * @param {number} [opts.minTotalTokens=MIN_TOTAL_TOKENS]
  * @returns {Promise<{totalCount: number, characters: Object[]}>} failures throw classified errors
  */
+export function normalizeDcTagIds(values = [], max = 74) {
+    if (!Array.isArray(values) && !(values instanceof Set)) throw new DatacatError('Invalid Datacat tag selection', { code: 'invalid_request' });
+    const ids = [...new Set([...values].map(Number))];
+    if (ids.length > max || ids.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+        throw new DatacatError(`Choose at most ${max} valid Datacat tags`, { code: 'invalid_request' });
+    }
+    return ids;
+}
+
 export async function fetchRecentPublic(opts = {}) {
-    const { limit = 24, offset = 0, tagIds = [], search = '', sortBy = '', minTotalTokens = MIN_TOTAL_TOKENS } = opts;
+    const { limit = 24, offset = 0, search = '', sortBy = '', minTotalTokens = MIN_TOTAL_TOKENS } = opts;
+    const tagIds = normalizeDcTagIds(opts.tagIds, 24), blockedTagIds = normalizeDcTagIds(opts.blockedTagIds, 50);
     let path = `/api/characters/recent-public?limit=${limit}&offset=${offset}&summary=1&minTotalTokens=${minTotalTokens}`;
     if (tagIds.length > 0) path += `&tagIds=${tagIds.join(',')}`;
+    if (blockedTagIds.length > 0) path += `&blockedTagIds=${blockedTagIds.join(',')}`;
     if (search) path += `&search=${encodeURIComponent(search)}`;
-    if (sortBy) path += `&sortBy=${encodeURIComponent(sortBy)}`;
-    const response = await dcFetch(path);
-    const data = await readJsonClassified(response);
-    return { totalCount: data.totalCount || 0, characters: data.characters || [] };
+    if (sortBy) path += `&sort=${encodeURIComponent(sortBy)}`;
+    const response = await dcFetch(path, opts);
+    const data = await readDcJson(response);
+    const page = normalizeDatacatPage(data, { limit, offset });
+    return { ...page, pagination: { total: page.total, hasMore: page.hasMore, nextOffset: page.nextOffset } };
 }
 
 /**
@@ -477,15 +545,23 @@ export async function fetchRecentPublic(opts = {}) {
  * @returns {Promise<{sortBy: string, last24h: Object[], thisWeek: Object[]}>} failures throw classified errors
  */
 export async function fetchFreshCharacters(opts = {}) {
-    const { sortBy = 'score', limit24 = 80, limitWeek = 20 } = opts;
-    const path = `/api/characters/fresh?summary=1&sortBy=${sortBy}&limit24=${limit24}&limitWeek=${limitWeek}`;
-    const response = await dcFetch(path);
-    const data = await readJsonClassified(response);
-    const w = data.windows || {};
+    const { sortBy = 'score', limit24 = 80, limitWeek = 20, offset24 = 0, offsetWeek = 0 } = opts;
+    const params = new URLSearchParams({ summary: 1, sortBy, limit24, limitWeek, offset24, offsetWeek });
+    const response = await dcFetch(`/api/characters/fresh?${params}`, opts);
+    const data = await readDcJson(response);
+    const w = data.windows;
+    if (!w || typeof w !== 'object' || Array.isArray(w)
+        || Number(limit24) > 0 && !w.last24h || Number(limitWeek) > 0 && !w.thisWeek) {
+        throw new DatacatError('DataCat returned invalid Fresh feed windows', { code: 'invalid_response' });
+    }
+    const day = normalizeDatacatPage(w.last24h || { characters: [], hasMore: false }, { limit: limit24, offset: offset24 });
+    const week = normalizeDatacatPage(w.thisWeek || { characters: [], hasMore: false }, { limit: limitWeek, offset: offsetWeek });
     return {
         sortBy: data.sortBy || sortBy,
-        last24h: w.last24h?.characters || [],
-        thisWeek: w.thisWeek?.characters || [],
+        last24h: day.characters,
+        thisWeek: week.characters,
+        pagination24: { total: day.total, nextOffset: day.nextOffset, hasMore: day.hasMore },
+        paginationWeek: { total: week.total, nextOffset: week.nextOffset, hasMore: week.hasMore },
     };
 }
 
@@ -497,18 +573,23 @@ export async function fetchFreshCharacters(opts = {}) {
  * @returns {Promise<{groups: Object[], tags: Object[]}|null>}
  */
 export async function fetchFacetedTags(opts = {}) {
-    const { activeTagIds = [], minTotalTokens = MIN_TOTAL_TOKENS } = opts;
-    try {
-        let path = `/api/tags/faceted?mode=recent&minTotalTokens=${minTotalTokens}`;
-        if (activeTagIds.length > 0) path += `&activeTagIds=${activeTagIds.join(',')}`;
-        const response = await dcFetch(path);
-        if (!response.ok) return null;
-        const data = await response.json();
-        return { groups: data.groups || [], tags: data.tags || [] };
-    } catch (e) {
-        console.error('[DataCat] fetchFacetedTags failed:', e);
-        return null;
+    const { minTotalTokens = MIN_TOTAL_TOKENS, limit = 250, offset = 0, search = '' } = opts;
+    const params = new URLSearchParams({ mode: 'recent', minTotalTokens, limit, offset, sort: 'count' });
+    for (const [key, max] of [['activeTagIds', 24], ['blockedTagIds', 50], ['includeTagIds', 74]]) {
+        const ids = normalizeDcTagIds(opts[key], max);
+        if (ids.length) params.set(key, ids.join(','));
     }
+    if (search.trim()) params.set('search', search.trim());
+    const response = await dcFetch(`/api/tags/faceted?${params}`, opts);
+    const data = await readDcJson(response);
+    if (!Array.isArray(data.tags)) throw new DatacatError('DataCat returned invalid tag data', { code: 'invalid_response' });
+    const tags = data.tags.map(tag => ({ ...tag, id: Number(tag.id), count: Number(tag.count) }))
+        .filter(tag => Number.isSafeInteger(tag.id) && tag.id > 0 && typeof (tag.name || tag.slug) === 'string');
+    const pageCount = Number.isSafeInteger(data.pageCount) && data.pageCount >= 0 ? data.pageCount : data.tags.length;
+    if (data.hasMore === true && !pageCount) throw new DatacatError('DataCat tag pagination did not advance', { code: 'invalid_response' });
+    return { groups: Array.isArray(data.groups) ? data.groups : [], tags,
+        hasMore: data.hasMore === true, nextOffset: Number(offset) + pageCount,
+        totalCount: Number.isFinite(data.totalCount) ? data.totalCount : tags.length };
 }
 
 // ========================================
@@ -570,11 +651,19 @@ export function stripDatacatMarkers(text) {
 
 const HAMPTER_SCRIPT_PATH_RE = /^\/hampter\/script\/[a-f0-9-]{36}$/i;
 
+function readLorebookEntries(script) {
+    try {
+        const entries = typeof script === 'string' ? JSON.parse(script) : script;
+        return Array.isArray(entries) && entries.every(entry => entry && typeof entry === 'object'
+            && !Array.isArray(entry) && typeof entry.content === 'string') ? entries : null;
+    } catch { return null; }
+}
+
 /** True when the row advertises a public lorebook whose content wasnt obtained. */
 export function hasUnfetchedLorebook(character) {
     const scripts = character?.scripts;
     if (!Array.isArray(scripts)) return false;
-    return scripts.some(s => s && s.type === 'lorebook' && s.is_public && !s.script);
+    return scripts.some(s => s && s.type === 'lorebook' && s.is_public && readLorebookEntries(s.script) === null);
 }
 
 /**
@@ -589,10 +678,12 @@ export function hasUnfetchedLorebook(character) {
  * @returns {Promise<boolean>} true when no public lorebook is left unfetched
  */
 export async function hydrateDatacatScripts(character, { signal } = {}) {
+    signal?.throwIfAborted();
     const scripts = character?.scripts;
     if (!Array.isArray(scripts) || !scripts.length) return true;
     for (const s of scripts) {
-        if (!s || s.type !== 'lorebook' || !s.is_public || s.script) continue;
+        signal?.throwIfAborted();
+        if (!s || s.type !== 'lorebook' || !s.is_public || readLorebookEntries(s.script) !== null) continue;
         // Listed publicly but the creator locked the content; hampter serves metadata only.
         if (s.is_code_public === false) continue;
         if (typeof s.api_path !== 'string' || !HAMPTER_SCRIPT_PATH_RE.test(s.api_path)) continue;
@@ -601,18 +692,21 @@ export async function hydrateDatacatScripts(character, { signal } = {}) {
                 signal,
                 headers: { 'Accept': 'application/json' },
             });
+            signal?.throwIfAborted();
             if (!resp.ok) {
                 console.warn('[DataCat] script hydration got HTTP', resp.status, 'for', s.api_path);
                 continue;
             }
             const full = await resp.json();
-            if (typeof full?.script === 'string' && full.script) {
+            signal?.throwIfAborted();
+            if (typeof full?.script === 'string' && readLorebookEntries(full.script) !== null) {
                 s.script = full.script;
                 if (!s.settings && typeof full.settings === 'string') s.settings = full.settings;
             } else {
                 console.warn('[DataCat] script hydration returned no content for', s.api_path);
             }
         } catch (e) {
+            if (e?.name === 'AbortError' || signal?.aborted) throw e;
             // leave unfetched; consumers flag it via hasUnfetchedLorebook
             console.warn('[DataCat] script hydration failed for', s.api_path, e?.message || e);
         }
@@ -630,12 +724,17 @@ export function extractCharacterBookFromScripts(character) {
     if (!usable.length) return null;
 
     const allEntries = [];
+    const usedIds = new Set();
     for (const s of usable) {
-        let parsed;
-        try { parsed = JSON.parse(s.script); } catch { continue; }
-        if (!Array.isArray(parsed)) continue;
+        const parsed = readLorebookEntries(s.script);
+        if (parsed === null) continue;
         for (const e of parsed) {
-            if (!e || typeof e !== 'object') continue;
+            let entryId = e.id ?? allEntries.length;
+            if (usedIds.has(String(entryId))) {
+                entryId = allEntries.length;
+                while (usedIds.has(String(entryId))) entryId++;
+            }
+            usedIds.add(String(entryId));
             const keys = Array.isArray(e.key)
                 ? e.key
                 : (e.keysRaw ? String(e.keysRaw).split(/,\s*/).filter(Boolean) : []);
@@ -649,7 +748,7 @@ export function extractCharacterBookFromScripts(character) {
                 case_sensitive: false,
                 name: e.name || '',
                 priority: typeof e.priority === 'number' ? e.priority : 10,
-                id: e.id ?? allEntries.length,
+                id: entryId,
                 comment: '',
                 selective: false,
                 constant: e.constant === true,
@@ -675,6 +774,41 @@ export function extractCharacterBookFromScripts(character) {
         extensions: {},
         entries: allEntries,
     };
+}
+
+// Read-only detail preview. This is never an acquired export or an import payload.
+export function buildDatacatMetadataPreview(character, { definitionSource = 'source', variantId } = {}) {
+    if (!character) return null;
+    const variants = Array.isArray(character.content_variants) ? character.content_variants : [];
+    const variant = variants.find(v => v && !v.isRecoveryPlaceholder && !v.is_recovery_placeholder
+        && (variantId ? String(v.id || v.variantId) === String(variantId) : v.isPrimary || v.is_primary));
+    if (variantId && !variant) return null;
+    const content = variant ? variant.content : character;
+    if (!content || typeof content !== 'object') return null;
+    const object = value => {
+        if (typeof value === 'string') { try { return JSON.parse(value); } catch { return null; } }
+        return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+    };
+    let data;
+    if (normalizeDefinitionSource(definitionSource) === 'reimagination') {
+        const reimag = object(content.datacat_reimagination || content.datacatReimagination
+            || variant?.datacat_reimagination || variant?.datacatReimagination);
+        const text = reimag?.outputText || reimag?.output_text || reimag?.interpretation;
+        if (typeof text !== 'string' || !text.trim()) return null;
+        // Reimagination text is not the Source card's greeting or scenario.
+        data = { name: content.name || character.name, description: text };
+    } else {
+        const row = { ...content, content_variants: undefined,
+            primary_content_source_kind: getDatacatSourceKind(variant, getDatacatSourceKind(character)) };
+        const fallback = buildV2FromDatacat(row).data;
+        const v2 = object(content.chara_card_v2_json || content.charaCardV2Json);
+        data = { ...fallback, ...object(v2?.data), creator_notes: fallback.creator_notes || v2?.data?.creator_notes || '' };
+        data.description = stripDatacatMarkers(data.description);
+    }
+    const fields = ['description', 'personality', 'scenario', 'first_mes', 'mes_example', 'creator_notes'];
+    if (!fields.some(field => typeof data[field] === 'string' && data[field].trim())
+        && !data.alternate_greetings?.length) return null;
+    return { data };
 }
 
 /**
@@ -770,76 +904,61 @@ export function buildV2FromDatacat(character) {
 
 /**
  * Build a V2 character card from the /download endpoint response.
- * The download format is already close to V2 but needs wrapping.
- *
- * For Saucepan-with-hidden-definition cards, /download returns empty body
- * fields. When a `character` object is supplied and contains an active
- * recovery variant (`content_variants[primary].content`), we fall back to it
- * for description, scenario, and first_mes. This keeps imports and update
- * checks working for repaired Saucepan cards.
+ * Current exports are authoritative for the chosen definition, including
+ * intentionally empty fields. Metadata only enriches identity and missing
+ * lorebooks; it never replaces a selected export's body with another variant.
  *
  * @param {Object} downloadData - Response from /api/characters/:id/download
  * @param {Object} [character] - Optional character metadata for enrichment
  * @returns {Object|null}
  */
-export function buildV2FromDownload(downloadData, character) {
+export function buildV2FromDownload(downloadData, character, context = {}) {
     const d = downloadData?.data;
-    if (!d) return null;
+    if (!d || typeof d !== 'object' || Array.isArray(d) || typeof d.name !== 'string') {
+        throw new DatacatError('DataCat returned an invalid exported card', { code: 'invalid_response' });
+    }
 
-    const recovered = character ? pickRecoveryVariant(character) : null;
-    const isSaucepan = character?.primary_content_source_kind === 'saucepan';
-    const v2Data = character?.chara_card_v2_json?.data || null;
-    // Old downloads carry the janitor body in personality, new ones are proper V2 (personality empty), so the || order covers both shapes, dont reorder.
-    const description = d.personality || d.description
-        || (isSaucepan
-            ? (recovered?.description || recovered?.personality || v2Data?.description || character?.description || '')
-            : (character?.personality || recovered?.personality || stripDatacatMarkers(v2Data?.description) || ''));
-    const scenario = d.scenario || recovered?.scenario || '';
-    const firstMes = d.first_mes || recovered?.first_message || '';
-    const creatorNotes = isSaucepan
-        ? (character?.companion_snapshot?.full_description
-            || character?.intercepted_chat_data?.companion_snapshot?.full_description
-            || v2Data?.creator_notes
-            || d.creator_notes
-            || '')
-        : (d.creator_notes || character?.description || '');
-    // New downloads ship URLs in creator/character_version; the real creator name lives in download metadata.
-    const isUrl = (s) => typeof s === 'string' && /^https?:\/\//i.test(s);
-    const creatorName = character?.creator_name || character?.creatorName
-        || downloadData?.metadata?.janitor_creator_name
-        || (isUrl(d.creator) ? '' : (d.creator || ''));
-    const cardVersion = (d.character_version && !isUrl(d.character_version)) ? d.character_version : '1.0';
+    const existing = d.extensions?.datacat || {};
+    // Current exports are canonical V2, including intentional empty values. Only a legacy,
+    // unversioned download uses Janitor's personality-as-definition convention.
+    const legacy = !downloadData.spec && !downloadData.spec_version;
+    const description = legacy && d.personality ? d.personality : (d.description ?? '');
+    const id = getDatacatCharacterId(character) || getDatacatCharacterId(context.id || '') || getDatacatCharacterId(existing.id || '');
 
     return {
         spec: 'chara_card_v2',
         spec_version: '2.0',
         data: {
+            ...d,
             name: d.name || character?.chat_name || character?.chatName || character?.name || 'Unknown',
             description,
-            personality: '',
-            scenario,
-            first_mes: firstMes,
+            personality: legacy ? '' : (d.personality ?? ''),
+            scenario: d.scenario ?? '',
+            first_mes: d.first_mes ?? '',
             mes_example: d.mes_example || '',
             system_prompt: d.system_prompt || '',
             post_history_instructions: d.post_history_instructions || '',
-            creator_notes: creatorNotes,
-            creator: creatorName,
-            character_version: cardVersion,
+            creator_notes: d.creator_notes ?? '',
+            creator: d.creator ?? character?.creator_name ?? downloadData?.metadata?.janitor_creator_name ?? '',
+            character_version: d.character_version ?? '1.0',
             tags: d.tags || [],
             alternate_greetings: d.alternate_greetings || [],
             extensions: {
                 ...(d.extensions || {}),
                 datacat: {
-                    id: character?.character_id || character?.characterId || null,
-                    sourceKind: character?.primary_content_source_kind || null,
-                    creatorId: character?.creator_id || character?.creatorId || null,
-                    creatorName: character?.creator_name || character?.creatorName || null
+                    ...existing,
+                    id: id || null,
+                    sourceKind: normalizeDatacatSourceKind(context.sourceKind) || getDatacatSourceKind(character, existing.sourceKind),
+                    definitionSource: normalizeDefinitionSource(context.definitionSource ?? existing.definitionSource),
+                    ...(context.variantId ? { variantId: context.variantId } : {}),
+                    creatorId: character?.creator_id || character?.creatorId || existing.creatorId || null,
+                    creatorName: character?.creator_name || character?.creatorName || existing.creatorName || null
                 }
             },
-            // Download's character_book is often present-but-empty; fall through to scripts.
-            character_book: (d.character_book?.entries?.length ? d.character_book : null)
-                || extractCharacterBookFromScripts(character)
-                || undefined
+            // Missing is different from an explicitly empty book in a selected export.
+            ...(Object.hasOwn(d, 'character_book') ? { character_book: d.character_book }
+                : normalizeDefinitionSource(context.definitionSource) === 'source'
+                    ? { character_book: extractCharacterBookFromScripts(character) || undefined } : {}),
         }
     };
 }
@@ -856,39 +975,20 @@ export function buildV2FromDownload(downloadData, character) {
  * @param {boolean} [opts.alwaysReextract=false] - force re-extraction even if DataCat already has the character
  * @returns {Promise<{success: boolean, queued?: boolean, started?: boolean, queuePosition?: number, requestId?: string, error?: string, errorCode?: string}>}
  */
-export async function submitExtraction(janitorUrl, { publicFeed = true, alwaysReextract = false } = {}) {
+export async function submitExtraction(janitorUrl, { publicFeed = true, alwaysReextract = false, signal } = {}) {
     if (!_apiRequest) throw new Error('DataCat: apiRequest not bound');
-    try {
-        const resp = await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/dc-extract`, 'POST', { url: janitorUrl, publicFeed, alwaysReextract });
-        if (!resp.ok) {
-            const errText = await resp.text();
-            console.error('[DataCat] dc-extract error:', resp.status, errText.substring(0, 200));
-            return { success: false, error: `Server returned ${resp.status}: ${errText.substring(0, 100)}` };
-        }
-        try {
-            return await resp.json();
-        } catch {
-            return { success: false, error: 'Invalid JSON response from cl-helper' };
-        }
-    } catch (e) {
-        console.error('[DataCat] submitExtraction failed:', e);
-        return { success: false, error: e.message };
-    }
+    const resp = await _apiRequest(`${CL_HELPER_PLUGIN_BASE}/dc-extract`, 'POST', { url: janitorUrl, publicFeed, alwaysReextract }, { signal });
+    return readDcJson(resp);
 }
 
 /**
  * Poll extraction status from DataCat.
  * @returns {Promise<{inProgress: Object|null, queueLength: number, queue: Array, history: Array}|null>}
  */
-export async function fetchExtractionStatus() {
-    try {
-        const resp = await dcFetch('/api/extraction/status-projection');
-        if (!resp.ok) return null;
-        return await resp.json();
-    } catch (e) {
-        console.error('[DataCat] fetchExtractionStatus failed:', e);
-        return null;
-    }
+export async function fetchExtractionStatus(options = {}) {
+    let data = await readDcJson(await dcFetch('/api/retrieval/status-projection', options), { allow404: true });
+    if (data === null) data = await readDcJson(await dcFetch('/api/retrieval/status', options));
+    return normalizeRetrievalStatus(data);
 }
 
 // ========================================
@@ -916,14 +1016,16 @@ const MEILI_SORT_MAP = {
  * @returns {Promise<{characters: Object[], totalHits: number, totalPages: number}>}
  */
 export async function searchMeiliJanny(opts = {}) {
-    const { search = '', page = 1, limit = 80, sort = 'janny_newest', nsfw = true, includeTags = new Set() } = opts;
+    const { search = '', page = 1, limit = 80, sort = 'janny_newest', nsfw = true } = opts;
+    const includeTags = normalizeDcTagIds(opts.includeTags, 24), excludeTags = normalizeDcTagIds(opts.excludeTags, 50);
 
     const filters = [];
     if (!nsfw) filters.push('isNsfw = false');
-    if (includeTags.size > 0) {
-        const tagClauses = [...includeTags].map(id => `tagIds = ${id}`);
+    if (includeTags.length > 0) {
+        const tagClauses = includeTags.map(id => `tagIds = ${id}`);
         filters.push(tagClauses.join(' AND '));
     }
+    if (excludeTags.length > 0) filters.push(excludeTags.map(id => `tagIds != ${id}`).join(' AND '));
 
     const data = await meiliMultiSearch({
         search,

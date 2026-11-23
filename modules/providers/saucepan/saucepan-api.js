@@ -2,7 +2,7 @@
 // saucepan-browse.js, plus DataCat and the Creator Downloads adapter for
 // creator/companion lookups. All calls go through cl-helper (transport only).
 
-import { CL_HELPER_PLUGIN_BASE } from '../provider-utils.js';
+import { CL_HELPER_PLUGIN_BASE, readJsonClassified } from '../provider-utils.js';
 
 // ========================================
 // CONSTANTS
@@ -435,11 +435,10 @@ async function fetchCompanionResult(id) {
     const promise = (async () => {
         try {
             const response = await saucepanFetch('GET', `/api/v2/companions/${encodeURIComponent(id)}`);
-            let data = null;
-            try { data = await response.json(); } catch { /* non-JSON body */ }
+            const data = await readJsonClassified(response);
             return { ok: response.ok, status: response.status, companion: data?.companion || null };
-        } catch {
-            return { ok: false, status: 0, companion: null };
+        } catch (error) {
+            return { ok: false, status: error.status || 0, companion: null, error };
         }
     })();
     const entry = { promise, ts: Date.now() };
@@ -462,9 +461,13 @@ async function fetchCompanionResult(id) {
  * @param {string} id
  * @returns {Promise<Object|null>}
  */
-export async function fetchSaucepanCompanion(id) {
+export async function fetchSaucepanCompanion(id, { strict = false } = {}) {
     if (!id) return null;
-    return (await fetchCompanionResult(id)).companion;
+    const result = await fetchCompanionResult(id);
+    if (strict && !result.companion && !result.error?.notFound) {
+        throw result.error || new Error('Saucepan returned an invalid companion response');
+    }
+    return result.companion;
 }
 
 /**
@@ -486,6 +489,31 @@ export async function fetchSaucepanFandoms() {
                 description: f.description || '',
                 searchTerms: f.search_terms || '',
             }));
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * Fork (Rayas-Tavern): fetch a companion's linked lorebooks (metadata only, no
+ * content). Powers the "Linked Lorebooks" preview section in the Online tab.
+ * Maps to a DataCat-compatible script shape so the render helper stays generic.
+ * @returns {Promise<Array<{id: string, type: string, title: string, is_public: boolean, user_name: string}>>}
+ */
+export async function fetchSaucepanLorebookList(companionId) {
+    if (!companionId) return [];
+    try {
+        const response = await saucepanFetch('GET', `/api/v2/companions/${encodeURIComponent(companionId)}/lorebooks`);
+        if (!response.ok) return [];
+        const data = await response.json();
+        const lorebooks = Array.isArray(data?.lorebooks) ? data.lorebooks : [];
+        return lorebooks.map(lb => ({
+            id: lb.id || '',
+            type: 'lorebook',
+            title: lb.name || lb.title || 'Untitled lorebook',
+            is_public: true,
+            user_name: lb.author_handle || lb.author_name || '',
+        }));
     } catch {
         return [];
     }
@@ -649,9 +677,10 @@ export async function submitSaucepanExtraction(companionUrl, { allowPartial = fa
  *   short_description                 -> extensions.saucepan.tagline
  * @param {Object} hit - Normalized Saucepan hit from search/companions endpoint
  * @param {Object} extractData - Result of submitSaucepanExtraction { assembled: {...}, greetings: [{title, text}] }
+ * @param {Object|null} [characterBook] - Optional V2 character_book from fetchSaucepanLorebook; attached to the card when present
  * @returns {Object|null}
  */
-export function buildV2FromSaucepan(hit, extractData) {
+export function buildV2FromSaucepan(hit, extractData, characterBook = null) {
     const assembled = extractData?.assembled;
     if (!hit || !assembled) return null;
     const description = assembled['Companion Core'] || '';
@@ -703,21 +732,159 @@ export function buildV2FromSaucepan(hit, extractData) {
                     tagline: hit.description || null,
                 },
             },
+            // The companion's lorebook, when reachable (fetchSaucepanLorebook). The
+            // generic import pipeline auto-imports + links character_book on import,
+            // which is what powers the Saucepan lorebook auto-link.
+            ...(characterBook ? { character_book: characterBook } : {}),
         },
     };
 }
 
 /**
+ * Convert a reassembled Saucepan lorebook chapter into a V2 character_book entry.
+ * Activation keys, secondary keys, and comment are extracted from the chapter
+ * text via regex (Saucepan creators embed them as **Activation Keys:** etc.).
+ * Falls back to chapter title for keys/comment when markers are absent.
+ *
+ * @param {{content: string, title: string, index: number}} raw
+ * @param {number} index
+ * @returns {Object} V2 character_book entry
+ */
+function convertSaucepanChapterToV2Entry(raw, index) {
+    const content = raw?.content || '';
+    const keyMatch = content.match(/\*\*Activation Keys:\*\*\s*([^\n<]+)/i);
+    const secondaryMatch = content.match(/\*\*Secondary Keys:\*\*\s*([^\n<]+)/i);
+    const commentMatch = content.match(/\*\*Comment:\*\*\s*([^\n<]+)/i);
+
+    const keys = keyMatch ? keyMatch[1].split(',').map(x => x.trim()).filter(Boolean)
+        : [raw?.title || `Lore Entry ${index + 1}`];
+    const secondaryKeys = secondaryMatch ? secondaryMatch[1].split(',').map(x => x.trim()).filter(Boolean) : [];
+    const comment = commentMatch ? commentMatch[1].trim() : (raw?.title || '');
+
+    return {
+        id: raw?.index ?? index,
+        keys,
+        secondary_keys: secondaryKeys,
+        comment,
+        content,
+        constant: false,
+        selective: true,
+        insertion_order: index,
+        enabled: true,
+        position: 'before_char',
+        use_regex: true,
+        extensions: {
+            position: 0,
+            exclude_recursion: false,
+            display_index: index,
+            probability: 100,
+            useProbability: true,
+            depth: 4,
+            selectiveLogic: 0,
+            outlet_name: '',
+            group: '',
+            group_override: false,
+            group_weight: 100,
+            prevent_recursion: false,
+            delay_until_recursion: false,
+            scan_depth: null,
+            match_whole_words: null,
+            use_group_scoring: false,
+            case_sensitive: null,
+            automation_id: '',
+            role: 0,
+            vectorized: false,
+            sticky: 0,
+            cooldown: 0,
+            delay: 0,
+            match_persona_description: false,
+            match_character_description: false,
+            match_character_personality: false,
+            match_character_depth_prompt: false,
+            match_scenario: false,
+            match_creator_notes: false,
+            triggers: [],
+            ignore_budget: false,
+            character_filter: { isExclude: false, names: [], tags: [] },
+        },
+    };
+}
+
+/**
+ * Fetch a Saucepan companion's linked lorebooks through the cl-helper proxy
+ * and convert them to a V2 character_book object. Chapters are fragment-
+ * obfuscated just like definitions, so reassembly happens client-side with the
+ * same FNV proof scheme used for prose sections (unscrambleFragments).
+ * Returns null when no lorebooks are found or every chapter failed to reassemble.
+ *
+ * @param {Object} hit - Normalized Saucepan hit (must have character_id or id)
+ * @returns {Promise<Object|null>} V2 character_book object or null
+ */
+export async function fetchSaucepanLorebook(hit) {
+    const companionId = hit?.character_id || hit?.id;
+    if (!companionId) return null;
+    try {
+        const listRes = await fetchSaucepanJson(`/api/v2/companions/${encodeURIComponent(companionId)}/lorebooks`);
+        if (!listRes.ok) return null;
+        const lorebooks = Array.isArray(listRes.data?.lorebooks) ? listRes.data.lorebooks : [];
+        if (lorebooks.length === 0) return null;
+
+        const entries = [];
+        for (const lorebook of lorebooks) {
+            const chaptersRes = await fetchSaucepanJson(`/api/v2/lorebooks/${encodeURIComponent(lorebook.id)}/chapters`);
+            if (!chaptersRes.ok) continue;
+            const chapters = Array.isArray(chaptersRes.data?.chapters) ? chaptersRes.data.chapters : [];
+            for (const chapterMeta of chapters) {
+                const chRes = await fetchSaucepanJson(
+                    `/api/v2/lorebooks/${encodeURIComponent(lorebook.id)}/chapters/${encodeURIComponent(chapterMeta.index)}`,
+                );
+                if (!chRes.ok || !chRes.data) continue;
+                const chapter = chRes.data;
+                const content = unscrambleFragments(chapter?.text_fragments);
+                if (!content || !content.trim()) continue;
+                entries.push({
+                    content,
+                    title: chapter?.title || chapterMeta?.title || '',
+                    index: chapter?.index ?? chapterMeta?.index ?? entries.length,
+                });
+            }
+        }
+        if (entries.length === 0) return null;
+
+        return {
+            name: lorebooks.length === 1
+                ? (lorebooks[0].name || 'Saucepan Lorebook')
+                : 'Saucepan Lorebooks',
+            description: '',
+            scan_depth: 2,
+            token_budget: 512,
+            recursive_scanning: false,
+            entries: entries.map((raw, i) => convertSaucepanChapterToV2Entry(raw, i)),
+            extensions: {},
+        };
+    } catch (e) {
+        console.warn('[Saucepan] fetchSaucepanLorebook failed:', e.message);
+        return null;
+    }
+}
+
+/**
  * Fetch a Saucepan companion's full definition and build a V2 card.
+ * The companion's lorebook is fetched in parallel and attached as
+ * character_book when present; a lorebook failure never blocks the card.
  * @param {Object} hit - Normalized Saucepan hit (must have character_id or id)
  * @returns {Promise<Object|null>} V2 card or null
  */
 export async function fetchSaucepanV2Card(hit) {
     if (!hit?.character_id && !hit?.id) return null;
-    const result = await submitSaucepanExtraction(saucepanCompanionUrl(hit.character_id || hit.id));
-    if (!result.success) {
-        console.warn('[Saucepan] Native extraction failed:', result.error);
+    const [extraction, lorebook] = await Promise.allSettled([
+        submitSaucepanExtraction(saucepanCompanionUrl(hit.character_id || hit.id)),
+        fetchSaucepanLorebook(hit),
+    ]);
+    if (extraction.status !== 'fulfilled' || !extraction.value?.success) {
+        console.warn('[Saucepan] Native extraction failed:', extraction.status === 'fulfilled' ? extraction.value.error : (extraction.reason?.message || extraction.reason));
         return null;
     }
-    return buildV2FromSaucepan(hit, result);
+    const characterBook = lorebook.status === 'fulfilled' ? lorebook.value : null;
+    return buildV2FromSaucepan(hit, extraction.value, characterBook);
 }

@@ -9,14 +9,16 @@ import { assignGalleryId, importFromPng, slugify, proxyEncode } from '../provide
 import chubBrowseView, { openChubTokenModal } from './chub-browse.js';
 import {
     initChubApi,
-    CHUB_API_BASE,
-    CHUB_GATEWAY_BASE,
-    CHUB_AVATAR_BASE,
+    normalizeChubTopics,
+    getChubApiBase,
+    getChubGatewayBase,
+    getChubAvatarBase,
     fetchWithProxy,
     extractNodes,
     chubMetadataCache,
     fetchChubMetadata,
     fetchChubLinkedLorebook,
+    fetchChubLorebookRawByPath,
     buildCharacterCardFromChub,
 } from './chub-api.js';
 
@@ -193,7 +195,7 @@ class ChubProvider extends ProviderBase {
             name: metadata.name || metadata.definition?.name,
             description: metadata.description,
             tagline: metadata.tagline,
-            avatar_url: `https://avatars.charhub.io/avatars/${linkInfo.fullPath}/avatar.webp`,
+            avatar_url: `${getChubAvatarBase()}${linkInfo.fullPath}/avatar.webp`,
             rating: metadata.rating,
             ratingCount: metadata.ratingCount || metadata.rating_count,
             starCount: metadata.starCount || metadata.star_count,
@@ -232,15 +234,15 @@ class ChubProvider extends ProviderBase {
                 charId: ext.id || null,
                 fullPath: fullPath || null,
                 hasGallery: !!ext.id,
-                avatarUrl: fullPath ? `${CHUB_AVATAR_BASE}${fullPath}/avatar.webp` : null
+                avatarUrl: fullPath ? `${getChubAvatarBase()}${fullPath}/avatar.webp` : null
             }
         };
     }
 
     // ── Remote Data ─────────────────────────────────────────
 
-    async fetchMetadata(fullPath) {
-        return fetchChubMetadata(fullPath);
+    async fetchMetadata(fullPath, options = {}) {
+        return fetchChubMetadata(fullPath, options);
     }
 
     /**
@@ -258,7 +260,8 @@ class ChubProvider extends ProviderBase {
         const useV4 = api?.getSetting('chubUseV4Api') || false;
 
         try {
-            const metadata = await this.fetchMetadata(fullPath);
+            const metadata = await this.fetchMetadata(fullPath, { strict: true });
+            if (!metadata) return null;
             const projectId = metadata?.id;
 
             const _listingName = this.getListingName(metadata);
@@ -293,19 +296,15 @@ class ChubProvider extends ProviderBase {
             }
 
             // Last resort: PNG extraction
-            const pngUrl = `${CHUB_AVATAR_BASE}${fullPath}/chara_card_v2.png`;
-            let response;
-            try { response = await fetch(pngUrl); }
-            catch { response = await fetch(`/proxy/${proxyEncode(pngUrl)}`); }
-            if (response.ok) {
-                const buffer = await response.arrayBuffer();
-                const cardData = api?.extractCharacterDataFromPng?.(buffer);
-                if (cardData) return cardData;
-            }
-            return null;
+            const pngUrl = `${getChubAvatarBase()}${fullPath}/chara_card_v2.png`;
+            const response = await fetchWithProxy(pngUrl);
+            const buffer = await response.arrayBuffer();
+            const cardData = api?.extractCharacterDataFromPng?.(buffer);
+            if (cardData) return cardData;
+            throw new Error('Chub export did not contain a valid character card');
         } catch (e) {
             console.error('[ChubProvider] fetchRemoteCard failed:', fullPath, e);
-            return null;
+            throw e;
         }
     }
 
@@ -314,8 +313,9 @@ class ChubProvider extends ProviderBase {
     }
 
     async fetchLorebook(linkInfo) {
-        if (!linkInfo?.id) return null;
-        return fetchChubLinkedLorebook(linkInfo.id);
+        if (!linkInfo?.fullPath) return null;
+        const metadata = await fetchChubMetadata(linkInfo.fullPath, { strict: true });
+        return metadata?.definition?.embedded_lorebook || null;
     }
 
     // ── Link Stats ──────────────────────────────────────────
@@ -330,7 +330,7 @@ class ChubProvider extends ProviderBase {
         const fullPath = linkInfo?.fullPath;
         if (!fullPath) return null;
         try {
-            const url = `${CHUB_API_BASE}/api/characters/${fullPath}?full=true`;
+            const url = `${getChubApiBase()}/api/characters/${fullPath}?full=true`;
             const response = await fetchWithProxy(url, { headers: this._getHeaders() });
             const data = await response.json();
             const node = data.node;
@@ -401,7 +401,7 @@ class ChubProvider extends ProviderBase {
         if (!id) return [];
 
         const r = await fetchWithProxy(
-            `${CHUB_API_BASE}/api/v4/projects/${id}/repository/commits`,
+            `${getChubApiBase()}/api/v4/projects/${id}/repository/commits`,
             { headers: this._getHeaders() }
         );
         const commits = await r.json();
@@ -428,7 +428,7 @@ class ChubProvider extends ProviderBase {
             await this._getProjectId(fullPath);
         }
         if (!_projectId) return null;
-        const url = `${CHUB_API_BASE}/api/v4/projects/${_projectId}/repository/files/raw%252Fcard.json/raw?ref=${ref}`;
+        const url = `${getChubApiBase()}/api/v4/projects/${_projectId}/repository/files/raw%252Fcard.json/raw?ref=${ref}`;
         try {
             const r = await fetchWithProxy(url, { headers: this._getHeaders() });
             const d = await r.json();
@@ -468,20 +468,7 @@ class ChubProvider extends ProviderBase {
 
         const card = flattenCard(enriched);
 
-        // Resolve linked lorebook
-        const embeddedCount = card.character_book?.entries?.length || 0;
-        if (_metadata.related_lorebooks?.length > 0 && _metadata.id) {
-            try {
-                const linked = await this.fetchLorebook({ id: _metadata.id });
-                if (linked?.entries?.length > 0) {
-                    card._metaLorebookEntries = embeddedCount;
-                    card._linkedLorebook = true;
-                    card.character_book = linked;
-                }
-            } catch (e) {
-                console.warn('[ChubProvider] Failed to resolve linked lorebook for page entry', e);
-            }
-        }
+        // Linked books are separate resources, never a replacement for this embedded book.
         return card;
     }
 
@@ -512,7 +499,7 @@ class ChubProvider extends ProviderBase {
 
     getAuthHeaders() {
         const token = api?.getSetting('chubToken');
-        return token ? { Authorization: `Bearer ${token}` } : {};
+        return token ? { Authorization: `Bearer ${token}`, samwise: token, 'CH-API-KEY': token } : {};
     }
 
     // ── URL Handling ────────────────────────────────────────
@@ -551,7 +538,7 @@ class ChubProvider extends ProviderBase {
                 label: 'URQL Token',
                 type: 'password',
                 defaultValue: null,
-                hint: 'Token for ChubAI API authentication',
+                hint: 'Token for ChubAI API authentication - also required to see NSFL results in search.',
                 section: 'Authentication'
             },
             {
@@ -619,7 +606,7 @@ class ChubProvider extends ProviderBase {
                     username: creatorLower
                 });
                 try {
-                    const authorResp = await fetch(`${CHUB_API_BASE}/search?${authorParams}`, { method: 'GET', headers });
+                    const authorResp = await fetchWithProxy(`${getChubApiBase()}/search?${authorParams}`, { method: 'GET', headers });
                     if (authorResp.ok) {
                         const authorData = await authorResp.json();
                         const authorNodes = this._extractNodes(authorData);
@@ -631,7 +618,7 @@ class ChubProvider extends ProviderBase {
                             const anyWordMatch = nameWords.some(w => nodeName.includes(w));
                             if (nodeName === normalizedName || nodeName.includes(normalizedName) ||
                                 normalizedName.includes(nodeName) || firstWordMatch || anyWordMatch) {
-                                allResults.push(this._normalizeSearchResult(node, CHUB_AVATAR_BASE));
+                                allResults.push(this._normalizeSearchResult(node, getChubAvatarBase()));
                             }
                         }
                         if (allResults.length > 0) {
@@ -650,12 +637,12 @@ class ChubProvider extends ProviderBase {
                 search: searchTerm, first: '10', sort: 'download_count',
                 nsfw: 'true', nsfl: 'true', include_forks: 'true', min_tokens: '50'
             });
-            const resp = await fetch(`${CHUB_API_BASE}/search?${params}`, { method: 'GET', headers });
+            const resp = await fetchWithProxy(`${getChubApiBase()}/search?${params}`, { method: 'GET', headers });
             if (resp.ok) {
                 const data = await resp.json();
                 for (const node of this._extractNodes(data)) {
                     if (!allResults.some(r => r.fullPath === node.fullPath)) {
-                        allResults.push(this._normalizeSearchResult(node, CHUB_AVATAR_BASE));
+                        allResults.push(this._normalizeSearchResult(node, getChubAvatarBase()));
                     }
                 }
             }
@@ -666,10 +653,10 @@ class ChubProvider extends ProviderBase {
                     search: name, first: '15', sort: 'download_count',
                     nsfw: 'true', nsfl: 'true', include_forks: 'true', min_tokens: '50'
                 });
-                const nameResp = await fetch(`${CHUB_API_BASE}/search?${nameParams}`, { method: 'GET', headers });
+                const nameResp = await fetchWithProxy(`${getChubApiBase()}/search?${nameParams}`, { method: 'GET', headers });
                 if (nameResp.ok) {
                     const nameData = await nameResp.json();
-                    allResults = this._extractNodes(nameData).map(n => this._normalizeSearchResult(n, CHUB_AVATAR_BASE));
+                    allResults = this._extractNodes(nameData).map(n => this._normalizeSearchResult(n, getChubAvatarBase()));
                 }
             }
 
@@ -681,7 +668,7 @@ class ChubProvider extends ProviderBase {
     }
 
     getResultAvatarUrl(result) {
-        return result.avatarUrl || `${CHUB_AVATAR_BASE}${result.fullPath}/avatar`;
+        return result.avatarUrl || `${getChubAvatarBase()}${result.fullPath}/avatar`;
     }
 
     // ── Import Pipeline ─────────────────────────────────────
@@ -704,6 +691,17 @@ class ChubProvider extends ProviderBase {
             const metadataListingName = this.getListingName(metadata);
             const metadataMaxResUrl = metadata.max_res_url || null;
             const metadataAvatarUrl = metadata.avatar_url || null;
+            // Kept separate from characterCard.data.character_book on purpose - see
+            // buildCharacterCardFromChub()'s doc comment. Imported as standalone additional
+            // Worlds after the character itself exists (needs its avatar filename to bind to).
+            const relatedLorebookPaths = (metadata.definition?.extensions?.chub?.related_lorebooks ?? [])
+                .map(entry => entry?.path)
+                .filter(Boolean);
+            // Expression pack(s) - fetched after import too, for the same reason (needs the
+            // character's real avatar filename to key its sprites folder, avoiding the same
+            // name-based-folder collision bug fixed in ST core's Expressions extension this
+            // session: two different cards can share a display name).
+            const chubExt = metadata.definition?.extensions?.chub;
             metadata = null;
 
             if (!characterCard.data.extensions) characterCard.data.extensions = {};
@@ -717,6 +715,7 @@ class ChubProvider extends ProviderBase {
                 linkedAt: new Date().toISOString()
             };
 
+            if (!characterCard.data.tags?.length) characterCard.data.tags = normalizeChubTopics(hitData?.topics);
             assignGalleryId(characterCard, options, api);
 
             // Avatar download - priority chain
@@ -724,9 +723,9 @@ class ChubProvider extends ProviderBase {
             if (metadataMaxResUrl) imageUrls.push(metadataMaxResUrl);
             if (hitData?.avatar_url) imageUrls.push(hitData.avatar_url);
             if (metadataAvatarUrl) imageUrls.push(metadataAvatarUrl);
-            imageUrls.push(`${CHUB_AVATAR_BASE}${fullPath}/avatar.webp`);
-            imageUrls.push(`${CHUB_AVATAR_BASE}${fullPath}/avatar.png`);
-            imageUrls.push(`${CHUB_AVATAR_BASE}${fullPath}/chara_card_v2.png`);
+            imageUrls.push(`${getChubAvatarBase()}${fullPath}/avatar.webp`);
+            imageUrls.push(`${getChubAvatarBase()}${fullPath}/avatar.png`);
+            imageUrls.push(`${getChubAvatarBase()}${fullPath}/chara_card_v2.png`);
             const uniqueUrls = [...new Set(imageUrls)];
 
             let imageBuffer = null;
@@ -740,18 +739,115 @@ class ChubProvider extends ProviderBase {
 
             chubMetadataCache.delete(fullPath);
 
-            return await importFromPng({
+            const result = await importFromPng({
                 characterCard, imageBuffer,
                 fileName: `chub_${slugify(characterName)}.png`,
                 characterName, hasGallery,
                 providerCharId: metadataId,
                 fullPath,
-                avatarUrl: `${CHUB_AVATAR_BASE}${fullPath}/avatar.webp`,
+                avatarUrl: `${getChubAvatarBase()}${fullPath}/avatar.webp`,
                 api
             });
+
+            if (result?.success && result.fileName && relatedLorebookPaths.length > 0) {
+                await this._importLinkedLorebooks(result.fileName, characterName, relatedLorebookPaths);
+            }
+
+            if (result?.success && result.fileName && chubExt) {
+                this._importChubExpressions(result.fileName, chubExt);
+            }
+
+            return result;
         } catch (error) {
             console.error(`[ChubProvider] importCharacter failed for ${fullPath}:`, error);
             return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Resolves and imports each of a character's linked (non-embedded) lorebooks as its own
+     * additional World Info file, bound via setCharAdditionalLorebooks - never merged into the
+     * character's own embedded_lorebook/character_book. Best-effort: a path that fails to
+     * resolve is skipped, not fatal to the others or to the character import that already
+     * succeeded.
+     * @param {string} avatar Avatar filename of the just-imported character
+     * @param {string} characterName Display name, used to build a readable World name
+     * @param {string[]} paths "lorebooks/creator/project-name" paths
+     */
+    async _importLinkedLorebooks(avatar, characterName, paths) {
+        const importedNames = [];
+        for (const path of paths) {
+            try {
+                const worldData = await fetchChubLorebookRawByPath(path);
+                if (!worldData) continue;
+                // Chub slugs already include a disambiguating hash suffix and are inherently
+                // filesystem-safe, unlike characterName - used as-is so the name we bind via
+                // setCharAdditionalLorebooks below is guaranteed to match what actually got
+                // written (saveWorldInfoData doesn't report back a server-sanitized name).
+                const worldName = path.split('/').pop();
+                const worlds = await window.listWorldInfoFiles({ strict: true });
+                const names = new Set(worlds.map(w => w.file_id));
+                let targetName = worldName, suffix = 2;
+                while (names.has(targetName)) targetName = worldName + ' (' + suffix++ + ')';
+                const ok = await window.importWorldInfoData?.(targetName, worldData);
+                if (ok) importedNames.push(targetName);
+            } catch (e) {
+                console.warn('[ChubProvider] Failed to import linked lorebook', path, e);
+            }
+        }
+
+        if (importedNames.length === 0) return;
+
+        const existing = await window.getCharAdditionalLorebooks?.(avatar) ?? [];
+        const bound = await window.setCharAdditionalLorebooks?.(avatar, [...new Set([...existing, ...importedNames])]);
+        if (!bound) { api?.showToast?.('Linked books imported but binding failed; attach them in Lorebooks.', 'warning', 6000); return; }
+        api?.showToast?.(`Imported ${importedNames.length} linked lorebook(s) for ${characterName}`, 'success', 5000);
+    }
+
+    /**
+     * Imports Chub expression pack(s) - chubExt.expressions (the primary/default pack) and
+     * chubExt.alt_expressions (a map of named alternate packs) - into the character's own
+     * sprites folder, keyed by its avatar filename (not display name, avoiding the name-
+     * collision bug fixed in ST core's Expressions extension this session). Detached/best-
+     * effort by design: kicks off up to dozens of background fetches and doesn't block the
+     * import, mirroring src/endpoints/sprites.js's importChubExpressions() on the ST core side.
+     * Doesn't distinguish a pack's is_default (confirmed unreliable as a signal either way).
+     * @param {string} avatar Avatar filename of the just-imported character
+     * @param {Object} chubExt definition.extensions.chub from the Chub API response
+     */
+    async _importChubExpressions(avatar, chubExt) {
+        const packs = [{ folder: avatar, expressions: chubExt.expressions?.expressions }];
+        for (const [altKey, altPack] of Object.entries(chubExt.alt_expressions || {})) {
+            packs.push({ folder: `${avatar}/${altKey}`, expressions: altPack?.expressions });
+        }
+
+        for (const { folder, expressions } of packs) {
+            if (!expressions || typeof expressions !== 'object') continue;
+            const entries = Object.entries(expressions).filter(([, url]) => typeof url === 'string' && /^https?:\/\//.test(url));
+            if (entries.length === 0) continue;
+
+            for (const [emotion, url] of entries) {
+                try {
+                    const resp = await fetchWithProxy(url);
+                    const blob = await resp.blob();
+                    const ext = url.split('?')[0].split('.').pop() || 'png';
+                    const file = new File([blob], `${emotion}.${ext}`, { type: blob.type || 'image/png' });
+
+                    const formData = new FormData();
+                    formData.append('name', folder);
+                    formData.append('label', emotion);
+                    formData.append('avatar', file);
+
+                    const csrfToken = api?.getCSRFToken?.();
+                    await fetch('/api/sprites/upload', {
+                        method: 'POST',
+                        headers: { 'X-CSRF-Token': csrfToken },
+                        body: formData,
+                    });
+                } catch (e) {
+                    console.warn('[ChubProvider] Failed to import expression', emotion, 'for', folder, e);
+                }
+            }
         }
     }
 
@@ -761,9 +857,9 @@ class ChubProvider extends ProviderBase {
 
     async fetchGalleryImages(linkInfo) {
         if (!linkInfo?.id) return [];
-        // Use module-level CHUB_GATEWAY_BASE from chub-api.js
+        // Resolved via getChubGatewayBase() from chub-api.js
         try {
-            const url = `${CHUB_GATEWAY_BASE}/api/gallery/project/${linkInfo.id}?limit=100&count=false`;
+            const url = `${getChubGatewayBase()}/api/gallery/project/${linkInfo.id}?limit=100&count=false`;
             const response = await fetchWithProxy(url, { headers: this._getHeaders() });
             const data = await response.json();
             if (!data.nodes || !Array.isArray(data.nodes)) return [];
@@ -832,7 +928,7 @@ class ChubProvider extends ProviderBase {
         if (!projectId) return null;
         try {
             const commitsResp = await fetchWithProxy(
-                `${CHUB_API_BASE}/api/v4/projects/${projectId}/repository/commits`,
+                `${getChubApiBase()}/api/v4/projects/${projectId}/repository/commits`,
                 { headers: this._getHeaders() }
             );
             const commits = await commitsResp.json();
@@ -840,7 +936,7 @@ class ChubProvider extends ProviderBase {
             if (!ref) return null;
 
             const cardResp = await fetchWithProxy(
-                `${CHUB_API_BASE}/api/v4/projects/${projectId}/repository/files/raw%252Fcard.json/raw?ref=${ref}`,
+                `${getChubApiBase()}/api/v4/projects/${projectId}/repository/files/raw%252Fcard.json/raw?ref=${ref}`,
                 { headers: this._getHeaders() }
             );
             return await cardResp.json() || null;

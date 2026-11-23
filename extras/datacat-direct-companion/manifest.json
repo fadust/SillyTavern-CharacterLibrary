@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Character Library — Datacat Direct Import",
+  "version": "1.0.0",
+  "description": "Return Datacat's official PNG export to your local Character Library. No account credentials are read or copied.",
+  "permissions": ["storage"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1/*", "http://localhost/*"],
+      "include_globs": ["*/scripts/extensions/third-party/SillyTavern-CharacterLibrary/app/library.html*"],
+      "js": ["library.js"],
+      "run_at": "document_start"
+    },
+    { "matches": ["https://datacat.run/*"], "js": ["datacat.js"], "run_at": "document_idle" },
+    { "matches": ["https://datacat.run/*"], "js": ["export.js"], "world": "MAIN", "run_at": "document_idle" }
+  ]
+}

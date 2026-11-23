@@ -1,6 +1,8 @@
 # SillyTavern Character Library
 
-> **Development on this extension is paused** until the standalone version, **Project Σ**, is released.
+> This fork integrates local Character Library improvements with the official 7.2.4 base. It includes CharaVault filters, the rebuilt CharacterTavern catalogue, independent SillyTavern tags, tokenizer counts, deeper search, and Datacat direct import with public Source lorebook preservation. See [integration and validation](INTEGRATION.md) and [contributor history](COMMIT-REVIEW.md).
+
+> **Upstream development is paused** until the standalone version, **Project Σ**, is released.
 >
 > Project Σ is Character Library rebuilt as its own app, with its own server and database. It does not rely or use SillyTavern at all. The main differences:
 >
@@ -80,6 +82,8 @@ A powerful SillyTavern extension for discovering, organizing, and managing your 
 - **Default Filter Preset** in Settings to auto-apply one preset every time the library opens, so you land in your most-used view without re-applying filters.
 - **Character Creator** with built-in AI Studio for assisted card authoring, brainstorming, and iterative refinement
 - **Lorebook Manager** for browsing, editing, creating, importing, and exporting world files, with AI-assisted entry generation
+- **Lorebook folders** organize books into collapsible, single-level folders. Use the folder-plus button to create a folder and the folder button beside a book to move it. New books start in **Uncategorized**; folders, membership, and collapse states are saved per account. Deleting a folder moves its books back to Uncategorized.
+- **Lorebook tags** let each book carry multiple labels. Edit them with the tag button beside a book, then use **Tags** above the list to filter by all or any selected tags, or show untagged books. Tag filters combine with search and folders; labels are saved per account and follow renamed books.
 - **Custom CSS theming** with snippet management and an AI CSS Assistant that writes and iterates on styling for you
 - **Animated card info** on hover with configurable visibility options
 
@@ -119,7 +123,11 @@ Character Library can run in two modes, configurable in SillyTavern's **Extensio
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| **Show Character Library button** | On | Show the separate Character Library top-bar icon. Applies when the optional Characters launcher dropdown is off or unavailable. |
+| **Show Lorebooks button** | On | Show the Lorebooks top-bar icon, or its entry in the combined mobile launcher. |
 | **Show launcher dropdown on Characters button** | Off | When off, a separate Character Library icon is added to SillyTavern's top bar and the Characters button behaves normally. When on, the Characters button is hijacked: clicking it opens a small dropdown to choose between SillyTavern's native character manager and Character Library. |
+
+Each module also has an **Open** button in these settings, available even when its top-bar icon is hidden. Visibility changes apply immediately and are saved. On phones, both enabled modules share a launcher; if only one is enabled, it gets a direct button.
 
 ### Embedded Panel Settings
 
@@ -701,41 +709,40 @@ CharacterTavern requires a session cookie for NSFW content. To set it up:
 <details>
 <summary><h3>DataCat (Experimental)</h3></summary>
 
-**Auth:** None required. An anonymous session is created automatically via the [cl-helper plugin](#cl-helper-plugin-not-detected).
+**Auth:** Browsing uses an anonymous session created by **cl-helper 1.13.1 or newer**. Datacat can require human verification before exporting a card; that happens in your browser on Datacat.
 
-> **This provider is experimental and disabled by default.** Enable it in Settings > Online > Providers. Expect rough edges: the API is barebones and some features may return incomplete results.
+> **Experimental and disabled by default.** Enable it in Settings > Online > Providers. Existing provider preferences and card links are preserved when updating.
 
-DataCat aggregates JanitorAI characters with its own REST API and AI-powered character scoring.
+- Browse and search Datacat's JanitorAI, Saucepan, and native Datacat characters, with recent and Fresh feeds, tags, creator catalogs, and following.
+- Preview a character and choose **Source** or **Reimagination**. Source is the default; Reimagination is Datacat's AI-generated alternative and is available only when Datacat provides it. CharacterLibrary remembers the choice for linked-card updates and never silently substitutes another definition.
+- Preview content loads through cl-helper from Datacat's character details, without requiring a card download first. It includes available definition, scenario, greetings, examples and creator notes; Reimagination shows its own returned text. The preview is read-only. Import still obtains the selected canonical export and may require browser verification. If details do not contain the selected content, the preview tries that export path and reports its actual error.
+- Import cards with their exported greetings, notes, lorebooks, extensions, and artwork. Current source-qualified Datacat URLs and older character links both work.
+- Retrieve missing JanitorAI or Saucepan characters, and optionally request fresh retrieval before update comparisons. Availability depends on Datacat's service and creator settings. Native Datacat uploads are not sent to external retrieval services.
+- JanitorAI MeiliSearch and Hampter sort modes remain available. Hampter sorts use the separate JanitorAI bridge described below.
 
-- Browse recent and popular characters
-- Sort by newest, trending, popular, and Hampter algorithm modes
-- Hampter sort orders (Latest, Trending, Trending 24h, Popular, Relevance) sit behind Cloudflare bot protection. A direct browser load is hit-or-miss (Cloudflare usually blocks it), so the companion **userscript** (`extras/cl-janitor-bridge.user.js`, installed in Tampermonkey or Violentmonkey) is the reliable path; it makes the Cloudflare-gated request from your own browser. JanitorAI serves only the first page of these sorts anonymously; paste your JanitorAI session cookie (the one whose name starts with `sb-` and ends in `-auth-token`, today `sb-mcmzxtzommpnxkynddbo-auth-token`) under Settings > Online > DataCat to page further (the session then refreshes itself). Other DataCat and MeiliSearch sort orders need neither
-- Filter by tags and NSFW toggle
-- In-app character preview with card details
-- Character linking and card updates
-- **Creator search** to find characters by a specific creator
-- **JanitorAI search** via MeiliSearch integration (searches JanitorAI's full catalog through DataCat)
-- **Following tab** to browse characters from creators you follow
-- **Inline extraction** in the preview modal when viewing a JanitorAI character not yet on DataCat
-- **Re-extraction for updates** to ensure the latest character definition is compared during update checks
+#### Setup and upgrading
 
-#### JanitorAI Extraction
+1. Install or update the bundled **cl-helper to 1.13.4**, then **restart SillyTavern**. Updating the extension alone does not reload a running server plugin. Settings > Info shows the helper's running version and update controls.
+2. Enable DataCat in Settings > Online > Providers. Its browsing session initializes automatically.
+3. For downloads that request browser verification, install the local [Datacat Direct Import companion](extras/datacat-direct-companion/README.html) in Chrome once. It works with this Library on `localhost` or `127.0.0.1`. Reload Library after enabling it.
+4. Click **Import** or check a single linked card for updates. cl-helper is tried first. When Datacat requires verification, the companion opens the selected card in a real Datacat tab, calls Datacat's official exporter with your selected Source/Reimagination and version, and returns the PNG automatically. Complete any normal human check in that tab. No manual download or file picker is needed for this route.
+5. Cancel stops the pending export and closes only its companion-created Datacat tab. The companion reads no account tokens, cookies, passwords, browsing history, or local files. Requests are pinned to the initiating Library tab, selected character, definition, version, and a random nonce. A placeholder image is rejected rather than reported as a complete package.
 
-DataCat can extract character definitions from JanitorAI URLs, including private/hidden definitions that aren't available via JanitorAI's public API:
+User-started bulk imports export characters serially. Batch update scans never open verification panels: a gated card is labeled **Verification required** and skipped; use a single-card update check to complete verification and compare it.
 
-1. Paste a JanitorAI character URL in the DataCat search bar
-2. If the character is already on DataCat, the preview opens directly
-3. If not, an extraction panel appears. Click **Extract** to queue the request
-4. DataCat runs a cloud browser instance to retrieve the character definition
-5. Once complete, the character is available for preview and import
+If the companion is unavailable, Library shows setup instructions and a direct Datacat link, without loading a blocked frame. **Choose downloaded PNG** remains an optional manual fallback: select the matching definition/version on Datacat, check **Embed lorebook into character PNG / JSON**, download PNG after verification, and choose that file. Its embedded identity and source must match. Official PNGs that omit selection stamps need the explicit confirmation; confirmation cannot override conflicting stamps. Invalid files remain retryable. This fallback does not count as verification of automatic Import.
 
-Extraction is handled entirely by DataCat's servers. The `appearOnPublicFeed` option in Settings controls whether extracted characters appear on DataCat's public feed.
+The helper session and Datacat browser session remain separate. Verifying an export in the browser does not unlock helper downloads or share a login token with CharacterLibrary. Creator download restrictions and redirects are reported instead of substituting metadata for a denied export. New imports attach the matching public linked Source lorebook when a successful export omitted it, including PNGs exported without Datacat's Embed lorebook checkbox. The book is embedded in the saved card and imported as a linked World. Update comparisons retain explicit null/empty export books; Reimagination and unrelated variants never borrow the primary Source book.
 
-#### Setup
-1. Ensure the [cl-helper plugin](#cl-helper-plugin-not-detected) is installed and detected (required for session proxying)
-2. Enable DataCat in Settings > Online > Providers
-3. The session initializes automatically on first browse
-4. (Optional, for the Hampter sort orders) Install the companion userscript `extras/cl-janitor-bridge.user.js` in a userscript manager like Tampermonkey or Violentmonkey, and add your JanitorAI login in Settings > Online > DataCat to page past the first page
+CharacterLibrary **7.3.3** also recognizes current Recent/Mine/Basket links and refuses an unavailable saved definition or variant. If Datacat removed the selected version, open the preview and explicitly choose an available one before importing or updating. Authentication, browser verification, creator restrictions, missing cards, and service failures stay distinct; a generic authentication failure does not replace an existing session. See the [validation record](tests/datacat/README.md) for automated coverage and live-test limitations.
+
+#### Retrieval
+
+Paste a JanitorAI or Saucepan URL to look up its character. A genuinely missing character offers **Retrieve**; session errors and temporary outages are reported separately. Once Datacat completes the matching retrieval request, the character becomes available for preview and export. Enable **Publish retrieved characters on DataCat** only when you want your requested public-feed visibility set to public. Reimagination selection downloads an existing alternative; it does not request generation or repair.
+
+#### JanitorAI Hampter sorts
+
+Latest, Trending, Trending 24h, Popular, and Relevance use JanitorAI's Cloudflare-protected endpoints. Install [the JanitorAI Bridge](extras/cl-janitor-bridge.user.js) for those sorts. To page past JanitorAI's anonymous limit, add your JanitorAI session under Settings > Online > DataCat. This is a **different script** from the Datacat Export Companion; the two scripts serve separate purposes. Other Datacat and MeiliSearch sort orders need no userscript.
 
 </details>
 
@@ -978,3 +985,45 @@ Licensed under the [GNU Affero General Public License v3](LICENSE).
 
 - [DOMPurify](https://github.com/cure53/DOMPurify) 3.0.6 (`app/vendor/dompurify/`), dual-licensed Apache License 2.0 / Mozilla Public License 2.0; the license banner is retained in the file.
 - [Font Awesome Free](https://fontawesome.com) 6.5.2 regular webfont (`app/vendor/fontawesome/`), font under the SIL Open Font License 1.1, icons under CC BY 4.0. The Font Awesome stylesheets and the solid/brands webfonts load from SillyTavern's own bundled copy; only the regular face (which SillyTavern does not ship) is vendored here.
+## Features ported from Rayas-Tavern
+
+These features originated in the [Rayas-Tavern fork](https://github.com/suhrayuh/Rayas-Tavern).
+
+### Always-Edit Setting
+
+A persistent toggle in **Settings → Character Details** that keeps the Edit tab unlocked by default, skipping the "Unlock Editing" step each time you open a character.
+
+- Added `alwaysEditEnabled` setting (default: off)
+- Checkbox in Character Details settings group
+- Respects the setting across modal opens, character switches, and saves
+
+### Nicknames Extension Compatibility
+
+Full integration with [SillyTavern-Nicknames](https://github.com/SillyTavern/SillyTavern-Nicknames). When the Nicknames extension is installed, a **Nickname editor** appears in the Edit tab and Creator for each character.
+
+- Read/write nicknames at Global, Character, and Chat levels
+- Context selector to choose where the nickname is saved
+- "View all levels" drawer showing all saved nicknames and the effective result
+- Lock integration: nickname inputs are disabled when editing is locked
+- Creator shows an info message (nicknames require an existing character)
+
+### Alternate Fields Extension Compatibility
+
+Integration with [SillyTavern-AlternateDescriptions](https://github.com/nbrown725/SillyTavern-AlternateDescriptions). **Alt. buttons** appear next to the expand button on all six supported fields in the Edit tab and Creator.
+
+- Supported fields: Description, Personality, Scenario, Example Dialogue, System Prompt, Post-History Instructions
+- Clicking an Alt. button opens a Character Library modal (not the ST popup) listing all saved alternates
+- Each alternate shows title, token count, and Use/Delete buttons
+- "Use" loads the alternate into the editor field with active state indicator
+- Token counts are calculated via SillyTavern's tokenizer
+- Data is read/written directly via `writeCardFields` and `applyCardFieldUpdates`
+- Lock integration: Alt. buttons are hidden when editing is locked
+
+### Lorebook Auto-Link on Saucepan Import
+
+When a Saucepan character has public lorebooks, the lorebook is fetched alongside the character, embedded into the imported V2 card, and automatically linked to the character on import.
+
+- Lorebook fragments are fetched from the Saucepan API and unscrambled client-side (FNV fragment reassembly) in `modules/providers/saucepan/saucepan-api.js`
+- The embedded lorebook feeds SillyTavern's generic auto-import path in `modules/providers/provider-utils.js` (`importFromPng`): the book name is sanitized via `CoreAPI.sanitizeFolderName`, entries are converted to native SillyTavern World Info format, and the world is linked as the character's primary lorebook (`extensions.world`)
+- The link is baked into the PNG card itself on export, so re-importing the card preserves the link
+- Also applies to embedded lorebooks in Chub imports (V2 book field preservation and native WI conversion)

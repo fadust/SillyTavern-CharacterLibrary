@@ -1,3 +1,14 @@
+export function normalizeChubTopics(topics) {
+    if (topics == null || !Array.isArray(topics)) return [];
+    return topics
+        .map(t => {
+            if (typeof t === 'string') return t.trim();
+            if (t && typeof t === 'object') return [t.name, t.slug].find(v => typeof v === 'string' && v.trim())?.trim() || '';
+            return '';
+        })
+        .filter(Boolean);
+}
+
 // Shared ChubAI API utilities - used by chub-provider.js and chub-browse.js
 //
 // Contains constants, auth headers, metadata/lorebook/gallery fetch,
@@ -8,9 +19,49 @@
 // CONSTANTS
 // ========================================
 
-export const CHUB_API_BASE = 'https://api.chub.ai';
-export const CHUB_GATEWAY_BASE = 'https://gateway.chub.ai';
-export const CHUB_AVATAR_BASE = 'https://avatars.charhub.io/avatars/';
+// Default upstream hosts. ChubAI splits across three of them:
+//   api.chub.ai           - REST API
+//   gateway.chub.ai       - GraphQL gateway / favorites / gallery
+//   avatars.charhub.io    - public CDN for avatars and card PNGs
+const CHUB_DEFAULT_API     = 'https://api.chub.ai';
+const CHUB_DEFAULT_GATEWAY = 'https://gateway.chub.ai';
+const CHUB_DEFAULT_AVATAR  = 'https://avatars.charhub.io/avatars/';
+
+// When the user runs ChubAI through their own gateway, only one base URL
+// is usually needed. The convention below mirrors the gateway used by
+// this extension upstream (`/v1/chub`, `/v1/chub-gw`, `/v1/chub-av`); a
+// reverse proxy that uses these paths gets the simple single-field setup.
+// Per-host overrides are still available for non-standard topologies.
+const CHUB_GATEWAY_PATHS = {
+    api:    '/v1/chub',
+    gw:     '/v1/chub-gw',
+    avatar: '/v1/chub-av/avatars/',
+};
+
+function _trimSlash(s) {
+    return s.replace(/\/+$/, '');
+}
+
+function _resolveChubBase(overrideKey, defaultBase, gatewayPath) {
+    const override = _trimSlash((_getSetting?.(overrideKey) || '').trim());
+    if (override) return override;
+    const base = _trimSlash((_getSetting?.('chubGatewayBaseUrl') || '').trim());
+    if (base) return base + gatewayPath;
+    return defaultBase;
+}
+
+export function getChubApiBase() {
+    return _resolveChubBase('chubGatewayApiUrl', CHUB_DEFAULT_API, CHUB_GATEWAY_PATHS.api);
+}
+
+export function getChubGatewayBase() {
+    return _resolveChubBase('chubGatewayGatewayUrl', CHUB_DEFAULT_GATEWAY, CHUB_GATEWAY_PATHS.gw);
+}
+
+export function getChubAvatarBase() {
+    const base = _resolveChubBase('chubGatewayAvatarUrl', CHUB_DEFAULT_AVATAR, CHUB_GATEWAY_PATHS.avatar);
+    return base.endsWith('/') ? base : base + '/';
+}
 
 // ========================================
 // INITIALIZATION
@@ -44,15 +95,30 @@ function debugLog(...args) {
  */
 export function getChubHeaders(includeAuth = true) {
     const headers = { 'Accept': 'application/json' };
+    const gwKey = _getSetting?.('chubGatewayKey');
     const token = _getSetting?.('chubToken');
+    if (gwKey) {
+        // Going through a self-hosted gateway: gateway key authenticates to the gateway itself,
+        // real chub token forwarded separately so the gateway can re-attach it upstream however
+        // that gateway expects (its contract, not chub.ai's).
+        headers['Authorization'] = `Bearer ${gwKey}`;
+        if (includeAuth && token) headers['X-Chub-Token'] = token;
+        return headers;
+    }
     if (includeAuth && token) {
+        // Talking to chub.ai directly: its gateway accepts the same credential under any of
+        // samwise/CH-API-KEY/Authorization depending on endpoint (confirmed empirically against
+        // /search) - send all three so auth-gated content (e.g. NSFL) isn't silently dropped just
+        // because one endpoint prefers a different header name.
         headers['Authorization'] = `Bearer ${token}`;
+        headers['samwise'] = token;
+        headers['CH-API-KEY'] = token;
     }
     return headers;
 }
 
 export { fetchWithProxy } from '../provider-utils.js';
-import { proxyEncode } from '../provider-utils.js';
+import { proxyEncode, readJsonClassified } from '../provider-utils.js';
 
 // ========================================
 // RESPONSE HELPERS
@@ -88,7 +154,7 @@ const CHUB_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
  * @param {string} fullPath - e.g. "creator/slug"
  * @returns {Promise<Object|null>}
  */
-export async function fetchChubMetadata(fullPath) {
+export async function fetchChubMetadata(fullPath, { strict = false } = {}) {
     const cached = chubMetadataCache.get(fullPath);
     if (cached && Date.now() - cached.time < CHUB_CACHE_TTL) {
         debugLog('[Chub] Using cached metadata for:', fullPath);
@@ -96,30 +162,20 @@ export async function fetchChubMetadata(fullPath) {
     }
 
     try {
-        const url = `${CHUB_API_BASE}/api/characters/${fullPath}?full=true`;
+        const url = `${getChubApiBase()}/api/characters/${fullPath}?full=true`;
         debugLog('[Chub] Fetching metadata from:', url);
 
         let response;
         try {
             response = await fetch(url, { headers: getChubHeaders(true) });
         } catch (directError) {
+            if (directError.name === 'AbortError') throw directError;
             debugLog('[Chub] Direct fetch failed, trying proxy:', directError.message);
             const proxyUrl = `/proxy/${proxyEncode(url)}`;
             response = await fetch(proxyUrl, { headers: getChubHeaders(true) });
         }
 
-        if (!response.ok) {
-            if (response.status === 404) {
-                const text = await response.text();
-                if (text.includes('CORS proxy is disabled')) {
-                    console.error('[Chub] CORS blocked and proxy is disabled');
-                    return null;
-                }
-            }
-            return null;
-        }
-
-        const data = await response.json();
+        const data = await readJsonClassified(response);
         const result = data.node || null;
 
         if (result) {
@@ -128,13 +184,13 @@ export async function fetchChubMetadata(fullPath) {
                 id: result.id,
                 name: result.name,
                 fullPath: result.fullPath,
-                topics: result.topics,
+                topics: normalizeChubTopics(result.topics),
                 tagline: result.tagline,
                 avatar_url: result.avatar_url,
                 max_res_url: result.max_res_url,
                 hasGallery: result.hasGallery,
                 creator: result.creator,
-                definition: {
+                definition: result.definition ? {
                     name: def.name,
                     personality: def.personality,
                     tavern_personality: def.tavern_personality,
@@ -149,7 +205,7 @@ export async function fetchChubMetadata(fullPath) {
                     character_version: def.character_version,
                     tagline: def.tagline,
                     embedded_lorebook: def.embedded_lorebook,
-                },
+                } : null,
                 related_lorebooks: result.related_lorebooks || [],
                 lastActivityAt: result.lastActivityAt || result.last_activity_at || null,
                 createdAt: result.createdAt || result.created_at || null,
@@ -166,8 +222,10 @@ export async function fetchChubMetadata(fullPath) {
             return strippedResult;
         }
 
+        if (strict) throw new Error('Chub returned an invalid character metadata response');
         return result;
     } catch (error) {
+        if (strict && !error.notFound) throw error;
         return null;
     }
 }
@@ -195,13 +253,13 @@ export async function fetchChubLinkedLorebook(projectId) {
         }
     };
     try {
-        const commitsResp = await tryFetch(`${CHUB_API_BASE}/api/v4/projects/${projectId}/repository/commits`);
+        const commitsResp = await tryFetch(`${getChubApiBase()}/api/v4/projects/${projectId}/repository/commits`);
         if (!commitsResp.ok) return null;
         const commits = await commitsResp.json();
         const ref = Array.isArray(commits) && commits[0]?.id;
         if (!ref) return null;
 
-        const cardResp = await tryFetch(`${CHUB_API_BASE}/api/v4/projects/${projectId}/repository/files/raw%252Fcard.json/raw?ref=${ref}`);
+        const cardResp = await tryFetch(`${getChubApiBase()}/api/v4/projects/${projectId}/repository/files/raw%252Fcard.json/raw?ref=${ref}`);
         if (!cardResp.ok) return null;
         const card = await cardResp.json();
         const book = card?.data?.character_book || card?.character_book || null;
@@ -211,6 +269,56 @@ export async function fetchChubLinkedLorebook(projectId) {
         return book;
     } catch (e) {
         console.error('[Chub] fetchChubLinkedLorebook failed for project', projectId, e);
+        return null;
+    }
+}
+
+/**
+ * Fetch a linked (non-embedded) lorebook by its own "lorebooks/creator/project-name" path -
+ * definition.extensions.chub.related_lorebooks[].path, NOT the character's own id/path. Resolves
+ * the project id from that path first (metadata lookup), then reads its sillytavern_raw.json via
+ * the V4 Git API - the same native { entries: {...} } shape ST's own /worldinfo/import expects,
+ * so the result can be handed to window.importWorldInfoData() with no format conversion.
+ *
+ * Path-based (not id-based) on purpose: a bare numeric id is not confirmed to resolve unlisted
+ * content the same way a path does.
+ *
+ * @param {string} path - e.g. "lorebooks/creator/project-name"
+ * @returns {Promise<Object|null>} native World Info data ({ entries: {...} }), or null if unresolvable
+ */
+export async function fetchChubLorebookRawByPath(path) {
+    if (!path) return null;
+    const headers = getChubHeaders(true);
+    const tryFetch = async (url) => {
+        try { return await fetch(url, { headers }); }
+        catch (e) {
+            if (e.name === 'AbortError') throw e;
+            return await fetch(`/proxy/${proxyEncode(url)}`, { headers });
+        }
+    };
+    try {
+        const metaResp = await tryFetch(`${getChubApiBase()}/api/${path}`);
+        if (!metaResp.ok) return null;
+        const metaData = await metaResp.json();
+        const projectId = metaData?.node?.id;
+        if (!projectId) return null;
+
+        const commitsResp = await tryFetch(`${getChubApiBase()}/api/v4/projects/${projectId}/repository/commits`);
+        if (!commitsResp.ok) return null;
+        const commits = await commitsResp.json();
+        const ref = Array.isArray(commits) && commits[0]?.id;
+        if (!ref) return null;
+
+        const rawResp = await tryFetch(`${getChubApiBase()}/api/v4/projects/${projectId}/repository/files/raw%252Fsillytavern_raw.json/raw?ref=${ref}`);
+        if (!rawResp.ok) return null;
+        const worldData = await rawResp.json();
+        if (worldData?.entries && typeof worldData.entries === 'object') {
+            debugLog('[Chub] Resolved linked lorebook from V4 Git API for path', path);
+            return worldData;
+        }
+        return null;
+    } catch (e) {
+        console.error('[Chub] fetchChubLorebookRawByPath failed for', path, e);
         return null;
     }
 }
@@ -238,29 +346,23 @@ export async function fetchChubLinkedLorebook(projectId) {
  *   definition.embedded_lorebook     → data.character_book
  *   metadata.topics                  → data.tags
  *
- * Resolves linked lorebooks (separate Chub projects) via the V4 Git API
- * when related_lorebooks is present.
+ * Does NOT resolve linked (non-embedded) lorebooks - definition.extensions.chub.related_lorebooks
+ * is a separate Chub project, not a variant of this card's own embedded_lorebook, and importing
+ * one should never silently overwrite the other. The caller (ChubProvider.importCharacter)
+ * resolves and imports linked lorebooks separately, as their own additional World Info files.
  *
  * @param {Object} apiData - Metadata object from fetchChubMetadata()
- * @returns {Promise<Object>} V2-spec character card { spec, spec_version, data }
+ * @returns {Object} V2-spec character card { spec, spec_version, data }
  */
-export async function buildCharacterCardFromChub(apiData) {
+export function buildCharacterCardFromChub(apiData) {
     const def = apiData.definition || {};
-
-    let characterBook = def.embedded_lorebook || undefined;
-    if (apiData.related_lorebooks?.length > 0 && apiData.id) {
-        try {
-            debugLog('[Chub] Resolving linked lorebook for import via V4 Git API');
-            const linked = await fetchChubLinkedLorebook(apiData.id);
-            if (linked?.entries?.length > 0) characterBook = linked;
-        } catch (e) {
-            console.warn('[Chub] Failed to fetch linked lorebook for', apiData.fullPath, e);
-        }
-    }
+    const characterBook = def.embedded_lorebook || undefined;
+    const lorebookUnavailable = !characterBook && !!apiData.related_lorebooks?.length;
 
     return {
         spec: 'chara_card_v2',
         spec_version: '2.0',
+        ...(lorebookUnavailable && { _lorebookUnavailable: true }),
         data: {
             name: def.name || apiData.name || 'Unknown',
             description: def.personality || '',
@@ -272,7 +374,7 @@ export async function buildCharacterCardFromChub(apiData) {
             system_prompt: def.system_prompt || '',
             post_history_instructions: def.post_history_instructions || '',
             alternate_greetings: def.alternate_greetings || [],
-            tags: apiData.topics || [],
+            tags: normalizeChubTopics(apiData.topics),
             creator: apiData.fullPath?.split('/')[0] || '',
             character_version: def.character_version || '',
             extensions: {

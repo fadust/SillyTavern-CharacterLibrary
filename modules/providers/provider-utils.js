@@ -138,7 +138,12 @@ export function deferCall(el, run) {
 // NETWORK
 // ========================================
 
-const _proxyOrigins = new Set();
+const _proxyOrigins = new Set([
+    'https://jannyai.com',
+    'https://botbooru.com',
+    'https://api.wyvern.chat',
+    'https://server.pygmalion.chat',
+]);
 
 // Short human snippet from an error body: JSON detail/message/error fields
 // when present, else the tag-stripped raw start. Capped at 200 chars.
@@ -201,6 +206,9 @@ function httpFailureError(status, text) {
     // Real auth statuses only, never a classified block page: Cloudflare challenges commonly
     // arrive as 403 and must not masquerade as an expired token; 5xx stays untagged likewise.
     if (!pageMsg && (status === 401 || status === 403)) err.authFailed = true;
+    // A disabled ST proxy also answers 404. Only an upstream missing resource may
+    // become Removed / Private in update checks; transport/configuration errors must throw.
+    if (!pageMsg && status === 404) err.notFound = true;
     return err;
 }
 
@@ -223,7 +231,14 @@ export function proxyEncode(url) {
  * @returns {Promise<Response>}
  */
 export async function fetchWithProxy(url, opts = {}) {
-    const origin = new URL(url).origin;
+    const origin = new URL(url, globalThis.location?.origin || 'http://localhost').origin;
+    // Same-origin URLs (e.g. cl-helper proxy paths like
+    // /api/plugins/cl-helper/saucepan-proxy/cdn/...) never need ST's /proxy/.
+    if (String(url).startsWith('/') && !String(url).startsWith('//')) {
+        const r = await fetch(url, opts);
+        if (!r.ok) throw httpFailureError(r.status, await r.text());
+        return r;
+    }
     if (!_proxyOrigins.has(origin)) {
         let directResponse;
         try {
@@ -234,8 +249,16 @@ export async function fetchWithProxy(url, opts = {}) {
             _proxyOrigins.add(origin);
         }
         if (directResponse) {
-            if (!directResponse.ok) throw httpFailureError(directResponse.status, await directResponse.text().catch(() => ''));
-            return directResponse;
+            if (directResponse.ok) return directResponse;
+            // Some upstreams reject the browser Origin even when CORS passes.
+            // Remember and retry through ST /proxy/ which strips Origin/Referer.
+            // 401 is genuine auth-fail and should propagate; only origin-shaped
+            // rejections (403 forbidden, 451 region block) get retried.
+            if (directResponse.status === 403 || directResponse.status === 451) {
+                _proxyOrigins.add(origin);
+            } else {
+                throw httpFailureError(directResponse.status, await directResponse.text().catch(() => ''));
+            }
         }
     }
     let r;
@@ -756,6 +779,12 @@ export async function importFromPng({
     if (Array.isArray(characterCard?.data?.tags)) {
         characterCard.data.tags = CoreAPI.applyTagAliases(characterCard.data.tags);
     }
+    // Strip empty/whitespace-only tags before embedding — prevents ghost tags on import.
+    if (characterCard?.data?.tags && Array.isArray(characterCard.data.tags)) {
+        characterCard.data.tags = characterCard.data.tags
+            .map(t => String(t || '').trim())
+            .filter(t => t.length > 0);
+    }
 
     const safeName = fileName.replace(/[^a-zA-Z0-9_.-]/g, '_');
 
@@ -830,6 +859,8 @@ export async function importFromPng({
     await CoreAPI.ensureExtractorsLoaded();
     const galleryPageUrls = CoreAPI.findCharacterGalleryUrls(characterCard);
     const galleryId = characterCard.data.extensions?.gallery_id || null;
+
+    await window.importEmbeddedCardLorebook?.(result.file_name, characterCard.data);
 
     return {
         success: true,

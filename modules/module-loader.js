@@ -14,7 +14,7 @@ import CoreAPI from './core-api.js';
 // CSS LOADER
 // ========================================
 
-const MODULE_CSS_VERSION = 82;
+const MODULE_CSS_VERSION = 91;
 
 function loadModuleCSS(path) {
     return new Promise((resolve) => {
@@ -173,6 +173,20 @@ async function initModuleSystem() {
 
     const dependencies = {};
 
+    try {
+        const quality = await import('./local-quality.js');
+        window.LocalQuality = quality;
+        loadModuleCSS('./local-quality.css');
+        ModuleLoader.register('local-quality', quality.default);
+    } catch (err) {
+        console.warn('[ModuleLoader] Could not load local card improvements:', err);
+    }
+
+    // The Lorebooks launcher can open before Tier 1 finishes. Install chat stubs first
+    // so its initial binding summary loads real chat metadata instead of caching an empty list.
+    loadModuleCSS('./chats.css');
+    setupLazyChats();
+
     // ============================
     // TIER 1 - Immediate modules
     // ============================
@@ -280,10 +294,11 @@ async function initModuleSystem() {
 
     try {
         loadModuleCSS('./lorebook-manager.css');
-        const lorebookModule = await import('./lorebook-manager.js');
+        const lorebookModule = await import(`./lorebook-manager.js?v=${MODULE_CSS_VERSION}`);
         ModuleLoader.register('lorebook-manager', lorebookModule.default);
 
         window.openLorebookManager = lorebookModule.openModal;
+        window.refreshLorebookUsedBy = lorebookModule.refreshUsedBy;
     } catch (err) {
         console.warn('[ModuleLoader] Could not load lorebook-manager module:', err);
     }
@@ -354,14 +369,17 @@ async function initModuleSystem() {
     // Providers - must be Tier 1 because ProviderRegistry is queried
     // during character grid rendering (link indicators, taglines, etc.)
     loadModuleCSS('./providers/browse-shared.css');
+    loadModuleCSS('./providers/charavault/charavault-browse.css?v=5');
     loadModuleCSS('./providers/chub/chub-browse.css');
     loadModuleCSS('./providers/chartavern/chartavern-browse.css');
     loadModuleCSS('./providers/pygmalion/pygmalion-browse.css');
     loadModuleCSS('./providers/wyvern/wyvern-browse.css');
+    loadModuleCSS('./providers/saucepan/saucepan-browse.css');
     loadModuleCSS('./providers/datacat/datacat-browse.css');
     loadModuleCSS('./providers/saucepan/saucepan-browse.css');
     loadModuleCSS('./providers/botbooru/botbooru-browse.css');
     loadModuleCSS('./providers/janitorai/janitorai-browse.css');
+    loadModuleCSS('./providers/crrepo/crrepo-browse.css');
     {
         const providerImports = [
             { name: 'chub', load: () => import('./providers/chub/chub-provider.js') },
@@ -371,12 +389,15 @@ async function initModuleSystem() {
             // jannyai.com URLs are unaffected either way.
             { name: 'janitorai', load: () => import('./providers/janitorai/janitorai-provider.js') },
             { name: 'janny', load: () => import('./providers/janny/janny-provider.js') },
-            { name: 'chartavern', load: () => import('./providers/chartavern/chartavern-provider.js') },
+            { name: 'chartavern', load: () => import('./providers/chartavern/chartavern-provider.js?v=ct2') },
             { name: 'pygmalion', load: () => import('./providers/pygmalion/pygmalion-provider.js') },
             { name: 'wyvern', load: () => import('./providers/wyvern/wyvern-provider.js') },
-            { name: 'datacat', load: () => import('./providers/datacat/datacat-provider.js') },
+            { name: 'saucepan', load: () => import('./providers/saucepan/saucepan-provider.js') },
+            { name: 'datacat', load: () => import('./providers/datacat/datacat-provider.js?v=integrated15') },
             { name: 'saucepan', load: () => import('./providers/saucepan/saucepan-provider.js') },
             { name: 'botbooru', load: () => import('./providers/botbooru/botbooru-provider.js') },
+            { name: 'charavault', load: () => import('./providers/charavault/charavault-provider.js?v=8') },
+            { name: 'crrepo', load: () => import('./providers/crrepo/crrepo-provider.js') },
         ];
         const results = await Promise.allSettled(providerImports.map(p => p.load()));
         for (let i = 0; i < results.length; i++) {
@@ -403,8 +424,6 @@ async function initModuleSystem() {
     setupLazyBatchTagging();
     setupLazyTagsManager();
     setupLazyBatchTransfer();
-    loadModuleCSS('./chats.css');
-    setupLazyChats();
 
     // Initialize all Tier 1 modules
     await ModuleLoader.initAll(dependencies);
@@ -486,6 +505,7 @@ function setupLazyChats() {
                 renderChats: chats.renderChats,
                 clearChatCache: chats.clearChatCache,
                 openChatPreview: chats.openChatPreview,
+                openChat: chats.openChat,
                 setChatBoundWorld: chats.setChatBoundWorld,
                 listCharacterChatsWithMeta: chats.listCharacterChatsWithMeta,
                 listAllChatsWithMeta: chats.listAllChatsWithMeta,
@@ -507,6 +527,7 @@ function setupLazyChats() {
         renderChats: chatStub('renderChats'),
         clearChatCache: chatStub('clearChatCache'),
         openChatPreview: chatStub('openChatPreview'),
+        openChat: chatStub('openChat'),
         setChatBoundWorld: chatStub('setChatBoundWorld'),
         listCharacterChatsWithMeta: chatStub('listCharacterChatsWithMeta'),
         listAllChatsWithMeta: chatStub('listAllChatsWithMeta'),

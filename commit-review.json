@@ -1,0 +1,1091 @@
+{
+  "upstream": "5c99e79ebc42b34ab65e89c553577d118b8e6de5",
+  "forks": [
+    {
+      "fork": "GalliumWang",
+      "repository": "GalliumWang/SillyTavern-CharacterLibrary",
+      "head": "d123b8457edba4b5a15479433cceeab07869188d",
+      "mergeBase": "5c99e79ebc42b34ab65e89c553577d118b8e6de5",
+      "ahead": 10,
+      "behind": 0,
+      "disposition": "Integrated final lorebook workspace; kept newer save/load guards.",
+      "commits": [
+        {
+          "sha": "9a5c9db914d58e8a37cfea834df6e66b06b55275",
+          "date": "2026-09-23T00:52:52+08:00",
+          "subject": "Open the lorebook manager from the SillyTavern top bar.",
+          "type": "implementation",
+          "disposition": "Integrated final lorebook workspace; kept newer save/load guards.",
+          "url": "https://github.com/GalliumWang/SillyTavern-CharacterLibrary/commit/9a5c9db914d58e8a37cfea834df6e66b06b55275"
+        },
+        {
+          "sha": "382bda5d18dfc51d0dbc9a7449245d0f17bcba95",
+          "date": "2026-09-23T01:16:00+08:00",
+          "subject": "Manage additional lorebooks and chat bindings from the lorebook editor.",
+          "type": "implementation",
+          "disposition": "Integrated final lorebook workspace; kept newer save/load guards.",
+          "url": "https://github.com/GalliumWang/SillyTavern-CharacterLibrary/commit/382bda5d18dfc51d0dbc9a7449245d0f17bcba95"
+        },
+        {
+          "sha": "b1a447023b3ccf27fc70e63d39777989ed5428d3",
+          "date": "2026-09-23T01:37:48+08:00",
+          "subject": "Fold the mobile top bar down to one Character Library icon.",
+          "type": "implementation",
+          "disposition": "Integrated final lorebook workspace; kept newer save/load guards.",
+          "url": "https://github.com/GalliumWang/SillyTavern-CharacterLibrary/commit/b1a447023b3ccf27fc70e63d39777989ed5428d3"
+        },
+        {
+          "sha": "f2502beebf1d874930d1b227715456d66b130360",
+          "date": "2026-09-23T01:50:01+08:00",
+          "subject": "Hide the primary-lorebook warning in additional binding management.",
+          "type": "implementation",
+          "disposition": "Integrated final lorebook workspace; kept newer save/load guards.",
+          "url": "https://github.com/GalliumWang/SillyTavern-CharacterLibrary/commit/f2502beebf1d874930d1b227715456d66b130360"
+        },
+        {
+          "sha": "7da71fa2a5acd247762c27b14eef45b0eebb2b63",
+          "date": "2026-10-19T23:35:49+08:00",
+          "subject": "Fix lorebooks top-bar button toggling",
+          "type": "implementation",
+          "disposition": "Integrated final lorebook workspace; kept newer save/load guards.",
+          "url": "https://github.com/GalliumWang/SillyTavern-CharacterLibrary/commit/7da71fa2a5acd247762c27b14eef45b0eebb2b63"
+        },
+        {
+          "sha": "be9bb3bfe7757fdec4cd3163d5caa836fa25a894",
+          "date": "2026-10-19T23:38:09+08:00",
+          "subject": "Remove lorebook manager entry from library menu",
+          "type": "implementation",
+          "disposition": "Integrated final lorebook workspace; kept newer save/load guards.",
+          "url": "https://github.com/GalliumWang/SillyTavern-CharacterLibrary/commit/be9bb3bfe7757fdec4cd3163d5caa836fa25a894"
+        },
+        {
+          "sha": "183b3a4d925d12dbc0f9b98664399ac431615be9",
+          "date": "2026-10-19T23:50:31+08:00",
+          "subject": "Show all lorebook binding types together",
+          "type": "implementation",
+          "disposition": "Integrated final lorebook workspace; kept newer save/load guards.",
+          "url": "https://github.com/GalliumWang/SillyTavern-CharacterLibrary/commit/183b3a4d925d12dbc0f9b98664399ac431615be9"
+        },
+        {
+          "sha": "4fef7dd6e06a034a4b1205d71e71b43b0635c496",
+          "date": "2026-10-20T00:20:18+08:00",
+          "subject": "Add collapsible folders to lorebook manager",
+          "type": "implementation",
+          "disposition": "Integrated final lorebook workspace; kept newer save/load guards.",
+          "url": "https://github.com/GalliumWang/SillyTavern-CharacterLibrary/commit/4fef7dd6e06a034a4b1205d71e71b43b0635c496"
+        },
+        {
+          "sha": "ed0439581be8fc191605c098a132ce5a74226b44",
+          "date": "2026-10-20T00:35:10+08:00",
+          "subject": "Add lorebook tags and tag filtering",
+          "type": "implementation",
+          "disposition": "Integrated final lorebook workspace; kept newer save/load guards.",
+          "url": "https://github.com/GalliumWang/SillyTavern-CharacterLibrary/commit/ed0439581be8fc191605c098a132ce5a74226b44"
+        },
+        {
+          "sha": "d123b8457edba4b5a15479433cceeab07869188d",
+          "date": "2026-10-20T00:46:15+08:00",
+          "subject": "Add launcher visibility controls and settings shortcuts",
+          "type": "implementation",
+          "disposition": "Integrated final lorebook workspace; kept newer save/load guards.",
+          "url": "https://github.com/GalliumWang/SillyTavern-CharacterLibrary/commit/d123b8457edba4b5a15479433cceeab07869188d"
+        }
+      ]
+    },
+    {
+      "fork": "pterror",
+      "repository": "pterror/SillyTavern-CharacterLibrary",
+      "head": "d353c6bf33d629c5f1d9d66fd78dbe49cd7ff8e8",
+      "mergeBase": "5c99e79ebc42b34ab65e89c553577d118b8e6de5",
+      "ahead": 22,
+      "behind": 0,
+      "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+      "commits": [
+        {
+          "sha": "f576105f92a3dd2c8d307ba1e7a9bff50c283733",
+          "date": "2026-05-09T18:11:33+03:00",
+          "subject": "provider-utils: fall back to /proxy/ on 401/403/451",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/f576105f92a3dd2c8d307ba1e7a9bff50c283733"
+        },
+        {
+          "sha": "df43f15b08c2beff02971d7785a05cb10509ea48",
+          "date": "2026-05-09T18:11:43+03:00",
+          "subject": "chub: route writes through fetchWithProxy, use CHUB_AVATAR_BASE",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/df43f15b08c2beff02971d7785a05cb10509ea48"
+        },
+        {
+          "sha": "34839419efe5eed9da459768b6587fad4ffd6569",
+          "date": "2026-05-09T18:12:06+03:00",
+          "subject": "Add CharaVault provider",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/34839419efe5eed9da459768b6587fad4ffd6569"
+        },
+        {
+          "sha": "2e1994f6813de101b64ab1eaa13902fcf41bac04",
+          "date": "2026-05-09T18:26:37+03:00",
+          "subject": "chub, chartavern: optional gateway base URL and key",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/2e1994f6813de101b64ab1eaa13902fcf41bac04"
+        },
+        {
+          "sha": "b3cf0d578077bce513e53df432415eb56d6653d0",
+          "date": "2026-05-09T18:33:51+03:00",
+          "subject": "chartavern: send Authorization on gateway-routed fetch; restore CharaVault favicon",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/b3cf0d578077bce513e53df432415eb56d6653d0"
+        },
+        {
+          "sha": "dd92fb3252f337a5202dd20aec5002faa3467d2f",
+          "date": "2026-05-09T19:03:30+03:00",
+          "subject": "link reference proxy implementation in gateway settings hints",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/dd92fb3252f337a5202dd20aec5002faa3467d2f"
+        },
+        {
+          "sha": "f725f135b811056e21b29feebe2c663d79d3e588",
+          "date": "2026-05-09T19:24:31+03:00",
+          "subject": "charavault: align card layout with chub canon",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/f725f135b811056e21b29feebe2c663d79d3e588"
+        },
+        {
+          "sha": "15f6fa9c7d6011dd2a1dd9966cc5daf235890b33",
+          "date": "2026-09-12T20:50:28+10:00",
+          "subject": "fix(chub): send samwise/CH-API-KEY alongside Authorization Bearer",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/15f6fa9c7d6011dd2a1dd9966cc5daf235890b33"
+        },
+        {
+          "sha": "bc6140540163017a83fcd3ab876ce8da58c3b359",
+          "date": "2026-09-12T21:29:09+10:00",
+          "subject": "fix(gallery): rewrite embedded chat media links on folder migration/rename",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/bc6140540163017a83fcd3ab876ce8da58c3b359"
+        },
+        {
+          "sha": "ebf4a1b2aa5599dc576d5f5d294b8073c388ab2f",
+          "date": "2026-09-12T21:47:14+10:00",
+          "subject": "fix(janitorai): combine search with creator filter, click tag to filter",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/ebf4a1b2aa5599dc576d5f5d294b8073c388ab2f"
+        },
+        {
+          "sha": "67f7d0b6cc86389c4805d15b83aef46bf0a10d22",
+          "date": "2026-09-12T21:47:42+10:00",
+          "subject": "fix(import): recognize server-side duplicate response instead of faking success",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/67f7d0b6cc86389c4805d15b83aef46bf0a10d22"
+        },
+        {
+          "sha": "bddac51c69ce0d8233cc3f8aa4e385e811a506ce",
+          "date": "2026-09-12T21:47:54+10:00",
+          "subject": "fix(dupe-finder): stop gating exact-match detection behind fuzzy-score preconditions",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/bddac51c69ce0d8233cc3f8aa4e385e811a506ce"
+        },
+        {
+          "sha": "d59bc8e5c6d35e780f534e1cd5f1f85ef9a9ca9f",
+          "date": "2026-09-12T22:09:09+10:00",
+          "subject": "Merge PR #18: CharaVault provider + optional gateway routing for chub/CharacterTavern",
+          "type": "merge/history",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/d59bc8e5c6d35e780f534e1cd5f1f85ef9a9ca9f"
+        },
+        {
+          "sha": "b9b97ce7c8840ac042392063df12b45a0492524c",
+          "date": "2026-09-12T22:13:30+10:00",
+          "subject": "fix: browse-view.js still imported the CHUB_API_BASE constant the PR #18 merge removed",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/b9b97ce7c8840ac042392063df12b45a0492524c"
+        },
+        {
+          "sha": "7ed51451d9ea4d6e07b9aa84adee2dfe4f417a3f",
+          "date": "2026-09-12T22:56:57+10:00",
+          "subject": "feat(chats): quick-open a character's most recent chat from the card grid",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/7ed51451d9ea4d6e07b9aa84adee2dfe4f417a3f"
+        },
+        {
+          "sha": "0f9797f22a4b583c10ff5c22f376af7c4c7471f2",
+          "date": "2026-09-12T23:06:12+10:00",
+          "subject": "feat(chats): add multi-select for bulk delete on the Chats screen",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/0f9797f22a4b583c10ff5c22f376af7c4c7471f2"
+        },
+        {
+          "sha": "edd328d84c4d4c8eabed95e0c8a904a1e8b7e048",
+          "date": "2026-09-12T23:09:15+10:00",
+          "subject": "feat(detail-modal): show local import date and card-stated create date separately",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/edd328d84c4d4c8eabed95e0c8a904a1e8b7e048"
+        },
+        {
+          "sha": "dff3503d684e0084fe657390848a8cebe95ef2c1",
+          "date": "2026-09-12T23:11:10+10:00",
+          "subject": "docs: add TODO.md for folders landing page (#45) and i18n (#1)",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/dff3503d684e0084fe657390848a8cebe95ef2c1"
+        },
+        {
+          "sha": "11906bc084e20d33a26e2a5b5ee003f38164e5ed",
+          "date": "2026-09-12T23:46:51+10:00",
+          "subject": "fix(library.html): add missing theme-color meta tag",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/11906bc084e20d33a26e2a5b5ee003f38164e5ed"
+        },
+        {
+          "sha": "9679383a7035685b276619ef4da04847f1f6bec3",
+          "date": "2026-09-13T00:40:50+10:00",
+          "subject": "feat(providers): add cr-repo custom-repository provider",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/9679383a7035685b276619ef4da04847f1f6bec3"
+        },
+        {
+          "sha": "0a7d735e223ecec8246ad085067be0290af0032f",
+          "date": "2026-09-13T10:35:30+10:00",
+          "subject": "fix(chub): resolve linked lorebooks by their own id/path, keep separate from embedded",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/0a7d735e223ecec8246ad085067be0290af0032f"
+        },
+        {
+          "sha": "d353c6bf33d629c5f1d9d66fd78dbe49cd7ff8e8",
+          "date": "2026-09-13T10:49:10+10:00",
+          "subject": "feat(chub): import expression packs on character import",
+          "type": "implementation",
+          "disposition": "Integrated providers and import tools; replaced chat rewrite with guarded shared repair and fixed linked-book ownership.",
+          "url": "https://github.com/pterror/SillyTavern-CharacterLibrary/commit/d353c6bf33d629c5f1d9d66fd78dbe49cd7ff8e8"
+        }
+      ]
+    },
+    {
+      "fork": "xyzzy121",
+      "repository": "xyzzy121/SillyTavern-CharacterLibrary",
+      "head": "a274bce18faeba7e9a585aaec9165bef10452e4d",
+      "mergeBase": "5c99e79ebc42b34ab65e89c553577d118b8e6de5",
+      "ahead": 5,
+      "behind": 0,
+      "disposition": "Integrated persistence/Datacat baseline; preserved classified errors during merges.",
+      "commits": [
+        {
+          "sha": "01cb375a0de982fcd0821376e1c7f34cbb48658f",
+          "date": "2026-09-23T11:59:18-04:00",
+          "subject": "Restore current Datacat compatibility for v7.3.0",
+          "type": "implementation",
+          "disposition": "Integrated persistence/Datacat baseline; preserved classified errors during merges.",
+          "url": "https://github.com/xyzzy121/SillyTavern-CharacterLibrary/commit/01cb375a0de982fcd0821376e1c7f34cbb48658f"
+        },
+        {
+          "sha": "a0ff4d0a3ff989403843188fdf23ebe318eda77a",
+          "date": "2026-09-23T12:13:36-04:00",
+          "subject": "Fix Datacat browsing, linking and verified export edge cases",
+          "type": "implementation",
+          "disposition": "Integrated persistence/Datacat baseline; preserved classified errors during merges.",
+          "url": "https://github.com/xyzzy121/SillyTavern-CharacterLibrary/commit/a0ff4d0a3ff989403843188fdf23ebe318eda77a"
+        },
+        {
+          "sha": "e5be7d5ca159c949252d0976e2b12fd06b964cd1",
+          "date": "2026-09-28T20:37:38-04:00",
+          "subject": "Fix persistence, editing, and provider update regressions",
+          "type": "implementation",
+          "disposition": "Integrated persistence/Datacat baseline; preserved classified errors during merges.",
+          "url": "https://github.com/xyzzy121/SillyTavern-CharacterLibrary/commit/e5be7d5ca159c949252d0976e2b12fd06b964cd1"
+        },
+        {
+          "sha": "5132e3400c5c68c00a6449ffd8e4b94bbd81f9aa",
+          "date": "2026-09-28T21:01:14-04:00",
+          "subject": "Fix Datacat retrieval, selection, and browsing regressions",
+          "type": "implementation",
+          "disposition": "Integrated persistence/Datacat baseline; preserved classified errors during merges.",
+          "url": "https://github.com/xyzzy121/SillyTavern-CharacterLibrary/commit/5132e3400c5c68c00a6449ffd8e4b94bbd81f9aa"
+        },
+        {
+          "sha": "a274bce18faeba7e9a585aaec9165bef10452e4d",
+          "date": "2026-09-28T21:13:29-04:00",
+          "subject": "Fix Datacat lorebook preservation, filters, and avatar restore",
+          "type": "implementation",
+          "disposition": "Integrated persistence/Datacat baseline; preserved classified errors during merges.",
+          "url": "https://github.com/xyzzy121/SillyTavern-CharacterLibrary/commit/a274bce18faeba7e9a585aaec9165bef10452e4d"
+        }
+      ]
+    },
+    {
+      "fork": "magicoflolis",
+      "repository": "magicoflolis/SillyTavern-CharacterLibrary",
+      "head": "754e95403cdb6e9a0389d80e956af09da97a3681",
+      "mergeBase": "5c99e79ebc42b34ab65e89c553577d118b8e6de5",
+      "ahead": 2,
+      "behind": 0,
+      "disposition": "Integrated optional userscript; corrected reported script version; live cookie support unverified.",
+      "commits": [
+        {
+          "sha": "5dda84d666a7eeeacf996714ad96946e36601b45",
+          "date": "2026-09-19T12:46:39-07:00",
+          "subject": "Reworked UserScript to utilize `GM_cookie` API",
+          "type": "implementation",
+          "disposition": "Integrated optional userscript; corrected reported script version; live cookie support unverified.",
+          "url": "https://github.com/magicoflolis/SillyTavern-CharacterLibrary/commit/5dda84d666a7eeeacf996714ad96946e36601b45"
+        },
+        {
+          "sha": "754e95403cdb6e9a0389d80e956af09da97a3681",
+          "date": "2026-09-19T12:50:22-07:00",
+          "subject": "Added `//@grant GM_info`",
+          "type": "implementation",
+          "disposition": "Integrated optional userscript; corrected reported script version; live cookie support unverified.",
+          "url": "https://github.com/magicoflolis/SillyTavern-CharacterLibrary/commit/754e95403cdb6e9a0389d80e956af09da97a3681"
+        }
+      ]
+    },
+    {
+      "fork": "cagedbird043",
+      "repository": "cagedbird043/SillyTavern-CharacterLibrary",
+      "head": "e412094db53db00eaf8d67600d9495f3b58a5643",
+      "mergeBase": "5c99e79ebc42b34ab65e89c553577d118b8e6de5",
+      "ahead": 7,
+      "behind": 0,
+      "disposition": "Integrated final remote-gallery/browser-route changes; pin feature remains reverted.",
+      "commits": [
+        {
+          "sha": "98a5de206c4559fc582cd84c0853ef93747eeb4d",
+          "date": "2026-09-12T18:38:30+08:00",
+          "subject": "JannyAI 卡片详情改走服务端浏览器",
+          "type": "implementation",
+          "disposition": "Integrated final remote-gallery/browser-route changes; pin feature remains reverted.",
+          "url": "https://github.com/cagedbird043/SillyTavern-CharacterLibrary/commit/98a5de206c4559fc582cd84c0853ef93747eeb4d"
+        },
+        {
+          "sha": "e457f52aec0f639054d69a5f1883443a8f3cc608",
+          "date": "2026-09-12T19:11:01+08:00",
+          "subject": "Gallery 显示卡片自带的远程媒体",
+          "type": "implementation",
+          "disposition": "Integrated final remote-gallery/browser-route changes; pin feature remains reverted.",
+          "url": "https://github.com/cagedbird043/SillyTavern-CharacterLibrary/commit/e457f52aec0f639054d69a5f1883443a8f3cc608"
+        },
+        {
+          "sha": "4118b87b3521c90826d8aefd2daefad7f5d19ddd",
+          "date": "2026-09-12T19:22:12+08:00",
+          "subject": "远程媒体改用 CL 自己的扫描器，并修复全屏查看器缩略图",
+          "type": "implementation",
+          "disposition": "Integrated final remote-gallery/browser-route changes; pin feature remains reverted.",
+          "url": "https://github.com/cagedbird043/SillyTavern-CharacterLibrary/commit/4118b87b3521c90826d8aefd2daefad7f5d19ddd"
+        },
+        {
+          "sha": "53ec9db441f6766f45c882ca11cb150c12fc92b2",
+          "date": "2026-09-12T19:25:41+08:00",
+          "subject": "详情页头像点开后一并显示远程图",
+          "type": "implementation",
+          "disposition": "Integrated final remote-gallery/browser-route changes; pin feature remains reverted.",
+          "url": "https://github.com/cagedbird043/SillyTavern-CharacterLibrary/commit/53ec9db441f6766f45c882ca11cb150c12fc92b2"
+        },
+        {
+          "sha": "e6d5c20f657e51538b5bb8057defad4560aa005c",
+          "date": "2026-09-12T19:46:16+08:00",
+          "subject": "远程图自动去掉 CDN 缩放参数，取原始分辨率",
+          "type": "implementation",
+          "disposition": "Integrated final remote-gallery/browser-route changes; pin feature remains reverted.",
+          "url": "https://github.com/cagedbird043/SillyTavern-CharacterLibrary/commit/e6d5c20f657e51538b5bb8057defad4560aa005c"
+        },
+        {
+          "sha": "6bb73460320965b9745f1650a39dd09024146c44",
+          "date": "2026-09-13T01:08:59+08:00",
+          "subject": "画廊新增「钉到屏幕」，远程图可用且支持手机拖动",
+          "type": "implementation",
+          "disposition": "Integrated final remote-gallery/browser-route changes; pin feature remains reverted.",
+          "url": "https://github.com/cagedbird043/SillyTavern-CharacterLibrary/commit/6bb73460320965b9745f1650a39dd09024146c44"
+        },
+        {
+          "sha": "e412094db53db00eaf8d67600d9495f3b58a5643",
+          "date": "2026-09-13T01:20:49+08:00",
+          "subject": "Revert \"画廊新增「钉到屏幕」，远程图可用且支持手机拖动\"",
+          "type": "revert",
+          "disposition": "Integrated final remote-gallery/browser-route changes; pin feature remains reverted.",
+          "url": "https://github.com/cagedbird043/SillyTavern-CharacterLibrary/commit/e412094db53db00eaf8d67600d9495f3b58a5643"
+        }
+      ]
+    },
+    {
+      "fork": "suhrayuh",
+      "repository": "suhrayuh/SillyTavern-CharacterLibrary",
+      "head": "3a285be05f8e464678ff35916cacf9ccffe72607",
+      "mergeBase": "150a6c9d8929c193fe836e098522bb4fcfe84262",
+      "ahead": 32,
+      "behind": 8,
+      "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+      "commits": [
+        {
+          "sha": "91835203445dd1aba74215c7a0e1b685ac3e06cf",
+          "date": "2026-06-25T00:11:45-05:00",
+          "subject": "feat: extend mobile breakpoint from 768px to 900px for iPad support",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/91835203445dd1aba74215c7a0e1b685ac3e06cf"
+        },
+        {
+          "sha": "8f8e05466c7981d3929bb4d527c4fba733fb659f",
+          "date": "2026-06-25T10:29:31-05:00",
+          "subject": "feat: add always-edit setting, Nicknames and Alternate Fields integration",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/8f8e05466c7981d3929bb4d527c4fba733fb659f"
+        },
+        {
+          "sha": "f4bd3d2b828b54cc1c7c7f26eb2accced4526076",
+          "date": "2026-06-25T15:02:48-05:00",
+          "subject": "Update Fork-Specific Changes section in README",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/f4bd3d2b828b54cc1c7c7f26eb2accced4526076"
+        },
+        {
+          "sha": "2223ccf41a5c782a1403ef8a9e659459efd9d900",
+          "date": "2026-06-26T00:08:15-05:00",
+          "subject": "fix: keep Apply All button visible in greetings modal on mobile",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/2223ccf41a5c782a1403ef8a9e659459efd9d900"
+        },
+        {
+          "sha": "8b20b5e276687961cfa1790ff9228ff415e03c7a",
+          "date": "2026-06-27T00:33:34-05:00",
+          "subject": "fix: auto-import embedded lorebooks when importing character cards",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/8b20b5e276687961cfa1790ff9228ff415e03c7a"
+        },
+        {
+          "sha": "8036d65eb3839662e0a0d736da4e9dbac052ba0a",
+          "date": "2026-06-28T17:56:27-05:00",
+          "subject": "fix: convert V2 character_book entries to native world info format when importing",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/8036d65eb3839662e0a0d736da4e9dbac052ba0a"
+        },
+        {
+          "sha": "edbd6d9dbe8e6900a182af20b3da1d138d749018",
+          "date": "2026-07-02T16:50:01-05:00",
+          "subject": "fix: preserve all V2/V3 character_book extension fields when importing lorebooks",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/edbd6d9dbe8e6900a182af20b3da1d138d749018"
+        },
+        {
+          "sha": "fba6153b38042d645e0e7c69d8d4835037ce9f11",
+          "date": "2026-07-03T23:22:34-05:00",
+          "subject": "fix: sync activeChar.data.extensions.world in memory after link/unlink",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/fba6153b38042d645e0e7c69d8d4835037ce9f11"
+        },
+        {
+          "sha": "0939d4bfe337354d8ea529d78d6f3da576ab2c21",
+          "date": "2026-07-04T01:11:13-05:00",
+          "subject": "fix: refresh ST world info list and sync character world link after lorebook import",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/0939d4bfe337354d8ea529d78d6f3da576ab2c21"
+        },
+        {
+          "sha": "d7a3808184619b9a72a1fa68a9c9b106cbc618b9",
+          "date": "2026-07-06T17:28:38-04:00",
+          "subject": "Add native Saucepan extraction and image proxying",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/d7a3808184619b9a72a1fa68a9c9b106cbc618b9"
+        },
+        {
+          "sha": "a96b8609f8c724648ddff521e84fbef094cbae4d",
+          "date": "2026-07-07T07:24:24-04:00",
+          "subject": "Link Saucepan-sourced characters to their source page",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/a96b8609f8c724648ddff521e84fbef094cbae4d"
+        },
+        {
+          "sha": "3adf2c9fb9a533c8ea0b2c8a2de5d813e2f0a87d",
+          "date": "2026-07-07T16:17:10-05:00",
+          "subject": "feat: add native Saucepan extraction (PR #36 from frogicporn)",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/3adf2c9fb9a533c8ea0b2c8a2de5d813e2f0a87d"
+        },
+        {
+          "sha": "57fd1f1daf5c09ee84fb7023f623761a9e3046f7",
+          "date": "2026-07-08T00:02:11-05:00",
+          "subject": "feat: Saucepan lorebook extraction + browse preview + chat count sorting + empty tag fix",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/57fd1f1daf5c09ee84fb7023f623761a9e3046f7"
+        },
+        {
+          "sha": "be54c6147ce5e2dc0ca13cdb6a43575b8f6b4858",
+          "date": "2026-07-10T06:09:27-05:00",
+          "subject": "fix: alternate greeting sync + save-without-changes behavior",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/be54c6147ce5e2dc0ca13cdb6a43575b8f6b4858"
+        },
+        {
+          "sha": "fa2c6d90f7f7c2007a3a6cb17c93fd2dadc3098a",
+          "date": "2026-07-10T13:46:57-05:00",
+          "subject": "fix: auto-link imported saucepan lorebook to character",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/fa2c6d90f7f7c2007a3a6cb17c93fd2dadc3098a"
+        },
+        {
+          "sha": "0b418d69518f86903aa445b5b02f7c1763d09686",
+          "date": "2026-07-11T13:17:26-05:00",
+          "subject": "feat: named alternate greetings with expand modal layout improvements",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/0b418d69518f86903aa445b5b02f7c1763d09686"
+        },
+        {
+          "sha": "fa79cdf8c896f4d96bdbe01f8bab27fedce4d04c",
+          "date": "2026-07-11T23:14:24-05:00",
+          "subject": "feat: merge upstream CL v6.5.0",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/fa79cdf8c896f4d96bdbe01f8bab27fedce4d04c"
+        },
+        {
+          "sha": "c4a2df07c259071408ee9e8467250800f4cac921",
+          "date": "2026-07-12T13:42:39-05:00",
+          "subject": "feat: merge upstream CL v6.6.0",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/c4a2df07c259071408ee9e8467250800f4cac921"
+        },
+        {
+          "sha": "5ec82c033ea1017970214d0405a8cb050ad8a9e9",
+          "date": "2026-07-13T10:51:38-05:00",
+          "subject": "fix: repair extension gating + improve Alt Fields popup",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/5ec82c033ea1017970214d0405a8cb050ad8a9e9"
+        },
+        {
+          "sha": "766817e7b18c9d2834d83e8b7139e49f80f6e212",
+          "date": "2026-07-13T11:18:41-05:00",
+          "subject": "fix: Alt Fields popup \"In Use\" + first-open auto-register",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/766817e7b18c9d2834d83e8b7139e49f80f6e212"
+        },
+        {
+          "sha": "0744edc37e2cbd0960ba9d2c611db0ffba3a9d1c",
+          "date": "2026-07-14T01:03:26-05:00",
+          "subject": "feat: promote Saucepan to a first-class provider",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/0744edc37e2cbd0960ba9d2c611db0ffba3a9d1c"
+        },
+        {
+          "sha": "eee878b150a41ed7c7a5675eb468f0440e5d1dc9",
+          "date": "2026-07-14T14:13:01-05:00",
+          "subject": "fix: harden provider browsing and edit safeguards",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/eee878b150a41ed7c7a5675eb468f0440e5d1dc9"
+        },
+        {
+          "sha": "b4c6c2246e4162411140c4a501bd81782aab905f",
+          "date": "2026-07-18T11:10:34-05:00",
+          "subject": "fix: merge upstream v6.7.0 into Saucepan-first fork",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/b4c6c2246e4162411140c4a501bd81782aab905f"
+        },
+        {
+          "sha": "49bb047d2c37caac11201112195b87aa68aff41b",
+          "date": "2026-07-18T18:24:26-05:00",
+          "subject": "fix: chat sort, CORS noise, search layout, Saucepan v2 API",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/49bb047d2c37caac11201112195b87aa68aff41b"
+        },
+        {
+          "sha": "c6adccfc4328ebd67873b135b492493c1eb10b20",
+          "date": "2026-07-18T19:11:18-05:00",
+          "subject": "fix: iframe sandbox allow-scripts + suppress phantom expand buttons",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/c6adccfc4328ebd67873b135b492493c1eb10b20"
+        },
+        {
+          "sha": "cfed92765b5d1dce62cae0226c617ec2356dd10a",
+          "date": "2026-07-18T20:58:56-05:00",
+          "subject": "fix: restore switchToMeiliSearch in DataCat search",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/cfed92765b5d1dce62cae0226c617ec2356dd10a"
+        },
+        {
+          "sha": "dc900d7f13276b723db38e4b67be72af4bc9c49f",
+          "date": "2026-07-19T01:25:11-05:00",
+          "subject": "fix: stale originalValues leak causing false unsaved-edit popup on char-modal nav",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/dc900d7f13276b723db38e4b67be72af4bc9c49f"
+        },
+        {
+          "sha": "4e580018415f4063f9a59e42ae199e89d5425dd8",
+          "date": "2026-07-19T15:14:20-05:00",
+          "subject": "fix: stale activeChar reference causes provider link to silently fail",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/4e580018415f4063f9a59e42ae199e89d5425dd8"
+        },
+        {
+          "sha": "e4c0d145b210564eb69884bad96481961527a9f7",
+          "date": "2026-07-24T18:08:20-05:00",
+          "subject": "fix: sanitize lorebook name on import to match ST filename rules",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/e4c0d145b210564eb69884bad96481961527a9f7"
+        },
+        {
+          "sha": "c5c58953d8f375f2b921ee134e2614a9a6f98fba",
+          "date": "2026-08-06T16:25:57-05:00",
+          "subject": "Merge remote-tracking branch 'upstream/main'",
+          "type": "merge/history",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/c5c58953d8f375f2b921ee134e2614a9a6f98fba"
+        },
+        {
+          "sha": "58c7456d9957d14b060e4210c632bad782f9d3c0",
+          "date": "2026-08-06T22:51:34-05:00",
+          "subject": "Merge remote-tracking branch 'upstream/main'",
+          "type": "merge/history",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/58c7456d9957d14b060e4210c632bad782f9d3c0"
+        },
+        {
+          "sha": "3a285be05f8e464678ff35916cacf9ccffe72607",
+          "date": "2026-08-06T22:55:36-05:00",
+          "subject": "fix: restore Saucepan fork features on v7.0.1 + fix settings persistence",
+          "type": "implementation",
+          "disposition": "Reconciled final delta onto current upstream; retained current defaults/save guards and consolidated embedded-book conversion/import.",
+          "url": "https://github.com/suhrayuh/SillyTavern-CharacterLibrary/commit/3a285be05f8e464678ff35916cacf9ccffe72607"
+        }
+      ]
+    },
+    {
+      "fork": "EndWorld",
+      "repository": "2022EndWorldBegin/SillyTavern-CharacterLibrary",
+      "head": "bec221028deb6a0b91a4b74177f4794a714f9f61",
+      "mergeBase": "5c99e79ebc42b34ab65e89c553577d118b8e6de5",
+      "ahead": 2,
+      "behind": 0,
+      "disposition": "Integrated final expanded-editor-only backdrop protection.",
+      "commits": [
+        {
+          "sha": "576261144536ca0a302c1a37cd456f575dfbc49a",
+          "date": "2026-10-10T07:40:56+08:00",
+          "subject": "Close modals only via close button, not backdrop click",
+          "type": "implementation",
+          "disposition": "Integrated final expanded-editor-only backdrop protection.",
+          "url": "https://github.com/2022EndWorldBegin/SillyTavern-CharacterLibrary/commit/576261144536ca0a302c1a37cd456f575dfbc49a"
+        },
+        {
+          "sha": "bec221028deb6a0b91a4b74177f4794a714f9f61",
+          "date": "2026-10-10T22:55:55+08:00",
+          "subject": "Prevent accidental closure of expanded field editor",
+          "type": "implementation",
+          "disposition": "Integrated final expanded-editor-only backdrop protection.",
+          "url": "https://github.com/2022EndWorldBegin/SillyTavern-CharacterLibrary/commit/bec221028deb6a0b91a4b74177f4794a714f9f61"
+        }
+      ]
+    },
+    {
+      "fork": "Laplace",
+      "repository": "Laplace-Lapis/SillyTavern-CharacterLibrary",
+      "head": "0b76a7cdee16c4696239a6e541ae9dd0f97e365e",
+      "mergeBase": "5c99e79ebc42b34ab65e89c553577d118b8e6de5",
+      "ahead": 3,
+      "behind": 0,
+      "disposition": "Integrated repair UI; replaced unsafe absence checks and writes with shared guarded repair.",
+      "commits": [
+        {
+          "sha": "aeab33adf12b1ae1b58b904be06133ba516d1207",
+          "date": "2026-10-14T20:58:19+02:00",
+          "subject": "Add \"Fix Chat Links\" step to unique gallery names flow",
+          "type": "implementation",
+          "disposition": "Integrated repair UI; replaced unsafe absence checks and writes with shared guarded repair.",
+          "url": "https://github.com/Laplace-Lapis/SillyTavern-CharacterLibrary/commit/aeab33adf12b1ae1b58b904be06133ba516d1207"
+        },
+        {
+          "sha": "303dd2b1dfb517e3515cfce1de7be8f12f0ecafd",
+          "date": "2026-10-14T20:58:23+02:00",
+          "subject": "Merge fix-chat-links into fork",
+          "type": "merge/history",
+          "disposition": "Integrated repair UI; replaced unsafe absence checks and writes with shared guarded repair.",
+          "url": "https://github.com/Laplace-Lapis/SillyTavern-CharacterLibrary/commit/303dd2b1dfb517e3515cfce1de7be8f12f0ecafd"
+        },
+        {
+          "sha": "0b76a7cdee16c4696239a6e541ae9dd0f97e365e",
+          "date": "2026-10-14T20:58:24+02:00",
+          "subject": "# 7.2.2.fork",
+          "type": "implementation",
+          "disposition": "Integrated repair UI; replaced unsafe absence checks and writes with shared guarded repair.",
+          "url": "https://github.com/Laplace-Lapis/SillyTavern-CharacterLibrary/commit/0b76a7cdee16c4696239a6e541ae9dd0f97e365e"
+        }
+      ]
+    },
+    {
+      "fork": "Cheesedozer",
+      "repository": "Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition",
+      "head": "31980322bd8f7aab288345008108c523834170b9",
+      "mergeBase": "cfece1200dafbacda581e744acaf64edd30dde63",
+      "ahead": 30,
+      "behind": 36,
+      "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+      "commits": [
+        {
+          "sha": "89793460c16269220b10ce73b26944f5298596a3",
+          "date": "2026-05-21T12:07:26-05:00",
+          "subject": "Fix AI Studio reverse-proxy credential forwarding",
+          "type": "implementation",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/89793460c16269220b10ce73b26944f5298596a3"
+        },
+        {
+          "sha": "698b3d0ecbfa0f2f85a85620accb6b7c5127cd0d",
+          "date": "2026-05-21T12:07:48-05:00",
+          "subject": "Merge pull request #1 from Cheesedozer/codex/fix-api-key-handling-in-ai-studio-function",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/698b3d0ecbfa0f2f85a85620accb6b7c5127cd0d"
+        },
+        {
+          "sha": "e04f33001c623e96cb0e2c38d280483a83ec3c27",
+          "date": "2026-05-21T12:08:40-05:00",
+          "subject": "Update manifest.json",
+          "type": "packaging/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/e04f33001c623e96cb0e2c38d280483a83ec3c27"
+        },
+        {
+          "sha": "3ca9f1194107266d1b5e451338066f50fcfd3aa2",
+          "date": "2026-05-21T12:30:13-05:00",
+          "subject": "Handle kebab/snake proxy fields in AI Studio profiles",
+          "type": "implementation",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/3ca9f1194107266d1b5e451338066f50fcfd3aa2"
+        },
+        {
+          "sha": "f731e6c91d7ef9d4b5c0ce537438e6c73b156a56",
+          "date": "2026-05-21T12:31:10-05:00",
+          "subject": "Merge branch 'main' into codex/fix-api-key-handling-in-ai-studio-function-g7jjr1",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/f731e6c91d7ef9d4b5c0ce537438e6c73b156a56"
+        },
+        {
+          "sha": "333a50c5c0b4e5f58894b3e310ae6f6bf46a5e2d",
+          "date": "2026-05-21T12:31:23-05:00",
+          "subject": "Merge pull request #2 from Cheesedozer/codex/fix-api-key-handling-in-ai-studio-function-g7jjr1",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/333a50c5c0b4e5f58894b3e310ae6f6bf46a5e2d"
+        },
+        {
+          "sha": "b440425ced0bdcd7938554c0f3bad0d795347e72",
+          "date": "2026-05-21T12:41:31-05:00",
+          "subject": "Read proxy config from nested profile/preset variants",
+          "type": "implementation",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/b440425ced0bdcd7938554c0f3bad0d795347e72"
+        },
+        {
+          "sha": "39bb87a8114146cc5ea7f73b13782e73bf06a6f1",
+          "date": "2026-05-21T12:42:02-05:00",
+          "subject": "Merge branch 'main' into codex/fix-api-key-handling-in-ai-studio-function-za94mr",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/39bb87a8114146cc5ea7f73b13782e73bf06a6f1"
+        },
+        {
+          "sha": "e0f0e932f70a8dc71a23bc398e6504191a80bb2a",
+          "date": "2026-05-21T12:42:11-05:00",
+          "subject": "Merge pull request #3 from Cheesedozer/codex/fix-api-key-handling-in-ai-studio-function-za94mr",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/e0f0e932f70a8dc71a23bc398e6504191a80bb2a"
+        },
+        {
+          "sha": "9f3fdf6783a3e97d9163ba2d8efee37196048922",
+          "date": "2026-05-21T12:48:15-05:00",
+          "subject": "Support secret/api-url key variants in AI Studio profiles",
+          "type": "implementation",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/9f3fdf6783a3e97d9163ba2d8efee37196048922"
+        },
+        {
+          "sha": "ce440bea3be0b7858e3bd24b3f1c726312caa351",
+          "date": "2026-05-21T12:48:50-05:00",
+          "subject": "Merge branch 'main' into codex/fix-api-key-handling-in-ai-studio-function-vjjzc6",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/ce440bea3be0b7858e3bd24b3f1c726312caa351"
+        },
+        {
+          "sha": "34649ada7bfa7be8ec771ca859d7d1c59c3838b8",
+          "date": "2026-05-21T12:49:09-05:00",
+          "subject": "Merge pull request #4 from Cheesedozer/codex/fix-api-key-handling-in-ai-studio-function-vjjzc6",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/34649ada7bfa7be8ec771ca859d7d1c59c3838b8"
+        },
+        {
+          "sha": "cb8a186bc25c90f7da705d9e1f3a97151552051f",
+          "date": "2026-05-21T12:58:45-05:00",
+          "subject": "Avoid getProfileValue runtime name collision in AI Studio",
+          "type": "implementation",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/cb8a186bc25c90f7da705d9e1f3a97151552051f"
+        },
+        {
+          "sha": "397ec240dffb20bce5502e72bb34a4047caccae4",
+          "date": "2026-05-21T13:00:22-05:00",
+          "subject": "Merge branch 'main' into codex/fix-api-key-handling-in-ai-studio-function-s1vo9h",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/397ec240dffb20bce5502e72bb34a4047caccae4"
+        },
+        {
+          "sha": "3262efad74e63032b4e1203fcec149cad80c761e",
+          "date": "2026-05-21T13:00:33-05:00",
+          "subject": "Merge pull request #5 from Cheesedozer/codex/fix-api-key-handling-in-ai-studio-function-s1vo9h",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/3262efad74e63032b4e1203fcec149cad80c761e"
+        },
+        {
+          "sha": "fa329ecd04adf35bd82e055cdb6c7aed14319ebe",
+          "date": "2026-05-21T13:05:20-05:00",
+          "subject": "Add backward-compatible getProfileValue alias for creator init stability",
+          "type": "implementation",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/fa329ecd04adf35bd82e055cdb6c7aed14319ebe"
+        },
+        {
+          "sha": "73bb6285b3aff8f2cafa4413c6d32e1fd8ef7d27",
+          "date": "2026-05-21T13:06:17-05:00",
+          "subject": "Merge branch 'main' into codex/fix-api-key-handling-in-ai-studio-function-ifu731",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/73bb6285b3aff8f2cafa4413c6d32e1fd8ef7d27"
+        },
+        {
+          "sha": "9dbfddcb53cefb3a2e4bd9bb305ec3705f5f3df7",
+          "date": "2026-05-21T13:06:28-05:00",
+          "subject": "Merge pull request #6 from Cheesedozer/codex/fix-api-key-handling-in-ai-studio-function-ifu731",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/9dbfddcb53cefb3a2e4bd9bb305ec3705f5f3df7"
+        },
+        {
+          "sha": "c8e27522390d9ca959479189e7625aac29c345d1",
+          "date": "2026-05-21T13:12:00-05:00",
+          "subject": "Avoid duplicate secretId declaration in character creator LLM call",
+          "type": "implementation",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/c8e27522390d9ca959479189e7625aac29c345d1"
+        },
+        {
+          "sha": "4f632ad05118b28f9bc0aa9bbe2590679e731532",
+          "date": "2026-05-21T13:16:18-05:00",
+          "subject": "Merge branch 'main' into codex/fix-api-key-handling-in-ai-studio-function-yi8ax6",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/4f632ad05118b28f9bc0aa9bbe2590679e731532"
+        },
+        {
+          "sha": "4577ad1bc3e764934441f2e1945bd1c744870d2f",
+          "date": "2026-05-21T13:16:30-05:00",
+          "subject": "Merge pull request #7 from Cheesedozer/codex/fix-api-key-handling-in-ai-studio-function-yi8ax6",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/4577ad1bc3e764934441f2e1945bd1c744870d2f"
+        },
+        {
+          "sha": "e026cf66b33f9eba8249101cb7be01208bf73936",
+          "date": "2026-05-21T13:29:19-05:00",
+          "subject": "Cache-bust character-creator module import to avoid stale SyntaxError",
+          "type": "packaging/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/e026cf66b33f9eba8249101cb7be01208bf73936"
+        },
+        {
+          "sha": "804f53c1d16ef3feee3fd3b20917733073a40485",
+          "date": "2026-05-21T13:30:32-05:00",
+          "subject": "Merge branch 'main' into codex/fix-api-key-handling-in-ai-studio-function-jfq116",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/804f53c1d16ef3feee3fd3b20917733073a40485"
+        },
+        {
+          "sha": "4f2870f24daa8dd2ec2c5d318ba391f360200424",
+          "date": "2026-05-21T13:30:56-05:00",
+          "subject": "Merge pull request #8 from Cheesedozer/codex/fix-api-key-handling-in-ai-studio-function-jfq116",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/4f2870f24daa8dd2ec2c5d318ba391f360200424"
+        },
+        {
+          "sha": "b347317405de186429cc69b17c6226a0b518cc78",
+          "date": "2026-05-21T13:35:09-05:00",
+          "subject": "Bump module-loader asset version to invalidate stale loader cache",
+          "type": "packaging/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/b347317405de186429cc69b17c6226a0b518cc78"
+        },
+        {
+          "sha": "b9cfb848ec7ad600a571e8d4fa0be2c340e30e90",
+          "date": "2026-05-21T13:36:22-05:00",
+          "subject": "Merge branch 'main' into codex/fix-api-key-handling-in-ai-studio-function-cqc20d",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/b9cfb848ec7ad600a571e8d4fa0be2c340e30e90"
+        },
+        {
+          "sha": "b10dd0733c322b205118bdd6f6fdd2741e02e7b0",
+          "date": "2026-05-21T13:37:03-05:00",
+          "subject": "Merge pull request #9 from Cheesedozer/codex/fix-api-key-handling-in-ai-studio-function-cqc20d",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/b10dd0733c322b205118bdd6f6fdd2741e02e7b0"
+        },
+        {
+          "sha": "5ed5cabbc97594d4e561776dc060a5c293445a2e",
+          "date": "2026-05-21T13:41:26-05:00",
+          "subject": "Bump loader and creator module cache-bust versions to v32",
+          "type": "packaging/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/5ed5cabbc97594d4e561776dc060a5c293445a2e"
+        },
+        {
+          "sha": "7a2194b85c8b8b40810fdeebb8fa99896e2e433a",
+          "date": "2026-05-21T13:44:24-05:00",
+          "subject": "Merge branch 'main' into codex/fix-api-key-handling-in-ai-studio-function-r84r40",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/7a2194b85c8b8b40810fdeebb8fa99896e2e433a"
+        },
+        {
+          "sha": "31980322bd8f7aab288345008108c523834170b9",
+          "date": "2026-05-21T13:46:17-05:00",
+          "subject": "Merge pull request #10 from Cheesedozer/codex/fix-api-key-handling-in-ai-studio-function-r84r40",
+          "type": "merge/history",
+          "disposition": "Historical patch not merged: duplicate declarations break parsing. Reimplemented explicit proxy compatibility in current shared resolver; retained named None behavior.",
+          "url": "https://github.com/Cheesedozer/SillyTavern-CharacterLibrary-Cheesedozer-Edition/commit/31980322bd8f7aab288345008108c523834170b9"
+        }
+      ]
+    },
+    {
+      "fork": "MrDfour",
+      "repository": "MrDfour/SillyTavern-CharacterLibrary-Test",
+      "head": "fa553b5dae8a4fcaa7b6c507ba4e27eddc04e391",
+      "mergeBase": "c79ad5c3f4350a625c08731745d2e850fdd22d5f",
+      "ahead": 9,
+      "behind": 38,
+      "disposition": "Ported Chub topic normalization/fallback with malformed-value handling. Excluded redundant post-import card write and fork naming/path changes; no ST tagMap sync claim.",
+      "commits": [
+        {
+          "sha": "cb587e5a56137c3d88ace434708079bfa25c7a25",
+          "date": "2026-05-03T06:57:04Z",
+          "subject": "Apply card tags to character on import via merge-attributes API",
+          "type": "implementation",
+          "disposition": "Ported Chub topic normalization/fallback with malformed-value handling. Excluded redundant post-import card write and fork naming/path changes; no ST tagMap sync claim.",
+          "url": "https://github.com/MrDfour/SillyTavern-CharacterLibrary-Test/commit/cb587e5a56137c3d88ace434708079bfa25c7a25"
+        },
+        {
+          "sha": "66c86dcd2eb13580b2fce63224765d86ae580afc",
+          "date": "2026-05-03T00:58:12-06:00",
+          "subject": "Merge pull request #1 from MrDfour/copilot/add-import-tags-for-character-cards",
+          "type": "merge/history",
+          "disposition": "Ported Chub topic normalization/fallback with malformed-value handling. Excluded redundant post-import card write and fork naming/path changes; no ST tagMap sync claim.",
+          "url": "https://github.com/MrDfour/SillyTavern-CharacterLibrary-Test/commit/66c86dcd2eb13580b2fce63224765d86ae580afc"
+        },
+        {
+          "sha": "c985cf42606e43730cb31442b507ff85c6c526a2",
+          "date": "2026-05-03T00:59:19-06:00",
+          "subject": "Update display name and version in manifest.json",
+          "type": "packaging/history",
+          "disposition": "Ported Chub topic normalization/fallback with malformed-value handling. Excluded redundant post-import card write and fork naming/path changes; no ST tagMap sync claim.",
+          "url": "https://github.com/MrDfour/SillyTavern-CharacterLibrary-Test/commit/c985cf42606e43730cb31442b507ff85c6c526a2"
+        },
+        {
+          "sha": "12d5eeaacb966b0f465a4d8c881562c1859bc773",
+          "date": "2026-05-03T01:00:17-06:00",
+          "subject": "Update extension name and directory constants",
+          "type": "packaging/history",
+          "disposition": "Ported Chub topic normalization/fallback with malformed-value handling. Excluded redundant post-import card write and fork naming/path changes; no ST tagMap sync claim.",
+          "url": "https://github.com/MrDfour/SillyTavern-CharacterLibrary-Test/commit/12d5eeaacb966b0f465a4d8c881562c1859bc773"
+        },
+        {
+          "sha": "e062fc5a4904a27799829a58565dc913149fbc2d",
+          "date": "2026-05-03T01:01:57-06:00",
+          "subject": "Fix CL_SETTINGS_KEY for character gallery",
+          "type": "implementation",
+          "disposition": "Ported Chub topic normalization/fallback with malformed-value handling. Excluded redundant post-import card write and fork naming/path changes; no ST tagMap sync claim.",
+          "url": "https://github.com/MrDfour/SillyTavern-CharacterLibrary-Test/commit/e062fc5a4904a27799829a58565dc913149fbc2d"
+        },
+        {
+          "sha": "4650a3836a3e7ecf445b3bc3da2928a1dba5bf01",
+          "date": "2026-05-03T07:05:08Z",
+          "subject": "Fix EXTENSION_DIR to match actual repository folder name",
+          "type": "implementation",
+          "disposition": "Ported Chub topic normalization/fallback with malformed-value handling. Excluded redundant post-import card write and fork naming/path changes; no ST tagMap sync claim.",
+          "url": "https://github.com/MrDfour/SillyTavern-CharacterLibrary-Test/commit/4650a3836a3e7ecf445b3bc3da2928a1dba5bf01"
+        },
+        {
+          "sha": "edda2544f0dbbe8e32e05daf93dc2ae1730835e1",
+          "date": "2026-05-03T01:06:09-06:00",
+          "subject": "Merge pull request #2 from MrDfour/copilot/debug-main-page-load-issue",
+          "type": "merge/history",
+          "disposition": "Ported Chub topic normalization/fallback with malformed-value handling. Excluded redundant post-import card write and fork naming/path changes; no ST tagMap sync claim.",
+          "url": "https://github.com/MrDfour/SillyTavern-CharacterLibrary-Test/commit/edda2544f0dbbe8e32e05daf93dc2ae1730835e1"
+        },
+        {
+          "sha": "89dd07d4b3fc6d6580879e9a9b6c254bcd425c6f",
+          "date": "2026-05-03T07:20:59Z",
+          "subject": "Fix Chub tag import by normalizing topics from metadata API",
+          "type": "implementation",
+          "disposition": "Ported Chub topic normalization/fallback with malformed-value handling. Excluded redundant post-import card write and fork naming/path changes; no ST tagMap sync claim.",
+          "url": "https://github.com/MrDfour/SillyTavern-CharacterLibrary-Test/commit/89dd07d4b3fc6d6580879e9a9b6c254bcd425c6f"
+        },
+        {
+          "sha": "fa553b5dae8a4fcaa7b6c507ba4e27eddc04e391",
+          "date": "2026-05-03T01:22:44-06:00",
+          "subject": "Merge pull request #3 from MrDfour/copilot/fix-importing-tags-feature",
+          "type": "merge/history",
+          "disposition": "Ported Chub topic normalization/fallback with malformed-value handling. Excluded redundant post-import card write and fork naming/path changes; no ST tagMap sync claim.",
+          "url": "https://github.com/MrDfour/SillyTavern-CharacterLibrary-Test/commit/fa553b5dae8a4fcaa7b6c507ba4e27eddc04e391"
+        }
+      ]
+    }
+  ]
+}

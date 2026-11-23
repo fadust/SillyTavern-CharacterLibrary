@@ -7,6 +7,7 @@ import { ProviderBase } from '../provider-interface.js';
 import CoreAPI from '../../core-api.js';
 import { assignGalleryId, importFromPng, proxyEncode } from '../provider-utils.js';
 import { initJanitorBridge, isJanitorBridgeAvailable, janitorBridgeFetch } from '../janitor-bridge.js';
+import { hasBrowserEndpoint, jannyBrowserPage } from '../janitorai/janitorai-api.js';
 import jannyBrowseView from './janny-browse.js';
 import {
     JANNY_IMAGE_BASE,
@@ -35,19 +36,38 @@ let api = null;
  * TLS fingerprinting and JS challenges. Strategy order is based on
  * observed reliability:
  *
- * 0. Userscript bridge - GM_xmlhttpRequest from the user's own browser,
- *    carries their cf_clearance cookie; the only transport that passes
- *    Cloudflare reliably since the 2026-07 challenge tightening
- * 1. corsproxy.io - datacenter IP, usually challenged now
- * 2. Puter.js WISP relay - needs COOP/COEP headers (SharedArrayBuffer);
+ * 0. Server browser - cl-helper drives a real Chromium and actually navigates,
+ *    which is the only shape Cloudflare lets through; works from any client,
+ *    including phones, where no userscript manager exists
+ * 1. Userscript bridge - GM_xmlhttpRequest from the user's own browser; carries
+ *    their cf_clearance cookie, but the request is still an XHR and jannyai.com
+ *    now answers those with 403 even for a browser that browses the site fine
+ * 2. corsproxy.io - datacenter IP, usually challenged now
+ * 3. Puter.js WISP relay - needs COOP/COEP headers (SharedArrayBuffer);
  *    SillyTavern doesn't set these, so rustls.wasm fails on most setups
- * 3. SillyTavern /proxy/ - node-fetch with Node.js TLS fingerprint,
+ * 4. SillyTavern /proxy/ - node-fetch with Node.js TLS fingerprint,
  *    Cloudflare usually blocks it with 403
  */
 async function fetchHtmlPage(url, opts = {}) {
     const errors = [];
 
-    // Strategy 0: the userscript bridge (same script that unlocks hampter)
+    // Strategy 0: a real navigation in the server's browser. Tried first because it is the only
+    // transport measured to succeed, and the only one that needs nothing installed client-side.
+    if (hasBrowserEndpoint()) {
+        try {
+            const html = await jannyBrowserPage(url);
+            if (isValidCharacterHtml(html)) {
+                console.info('[JannyProvider] Page fetched via server browser');
+                return html;
+            }
+            errors.push('server browser: unexpected page shape');
+        } catch (e) {
+            errors.push(`server browser: ${e.message}`);
+            console.warn('[JannyProvider] Server browser strategy failed:', e.message);
+        }
+    }
+
+    // Strategy 1: the userscript bridge (same script that unlocks hampter)
     if (isJanitorBridgeAvailable()) {
         try {
             const res = await janitorBridgeFetch(url, '', { allowClearance: !!opts.allowClearance });
@@ -61,7 +81,7 @@ async function fetchHtmlPage(url, opts = {}) {
         }
     }
 
-    // Strategy 1: corsproxy.io - datacenter IP, usually challenged now; kept as a fallback
+    // Strategy 2: corsproxy.io - datacenter IP, usually challenged now; kept as a fallback
     try {
         const html = await corsproxyFetchHtml(url);
         if (html) {
@@ -73,7 +93,7 @@ async function fetchHtmlPage(url, opts = {}) {
         console.warn('[JannyProvider] corsproxy.io strategy failed:', e.message);
     }
 
-    // Strategy 2: Puter.js WISP relay (only if not known-broken)
+    // Strategy 3: Puter.js WISP relay (only if not known-broken)
     if (!_puterBroken) {
         try {
             const html = await puterFetchHtml(url);
@@ -87,7 +107,7 @@ async function fetchHtmlPage(url, opts = {}) {
         }
     }
 
-    // Strategy 3: SillyTavern server-side proxy (node-fetch from user's IP)
+    // Strategy 4: SillyTavern server-side proxy (node-fetch from user's IP)
     try {
         const html = await stProxyFetchHtml(url);
         if (html) {
@@ -517,15 +537,16 @@ class JannyProvider extends ProviderBase {
         try {
             const slug = linkInfo.slug || slugify(linkInfo.name || '');
             const data = await fetchCharacterDetails(linkInfo.id, slug);
-            if (data) {
+            if (data?.character && typeof data.character.name === 'string') {
                 const result = buildV2FromDetails(data);
                 if (result) result._listingName = this.getListingName(data.character);
                 return result;
             }
-            return null;
+            throw new Error('JannyAI returned an invalid character detail response');
         } catch (e) {
             console.error('[JannyProvider] fetchRemoteCard failed:', linkInfo.id, e);
-            return null;
+            if (e.notFound) return null;
+            throw e;
         }
     }
 

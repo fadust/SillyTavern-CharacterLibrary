@@ -4,10 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=overlays-content">
     <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#121212">
     <meta name="referrer" content="no-referrer">
     <meta name="character-library" content="1"><!-- marker for the optional JanitorAI bridge userscript -->
     <title>SillyTavern Character Library</title>
-    <link rel="stylesheet" href="library.css?v=110">
+    <link rel="stylesheet" href="library.css?v=111">
     <link rel="stylesheet" href="library-mobile.css?v=38">
     <!-- Noto Sans from SillyTavern's bundled webfonts -->
     <link rel="stylesheet" href="/webfonts/NotoSans/stylesheet.css">
@@ -29,6 +30,9 @@
         // applyModalSize in library.js — keep maps in sync if those change.
         (function () {
             try {
+                if (new URLSearchParams(location.search).get('lorebooksOnly') === '1') {
+                    document.documentElement.classList.add('cl-lorebooks-only');
+                }
                 // Only iOS (incl. iPadOS, which reports as a Mac with touch) auto-zooms on input
                 // focus below 16px font. Tag <html> so that 16px guard can be scoped to iOS alone
                 // and every other platform keeps the compact scale. All iOS browsers are WebKit, so
@@ -145,6 +149,9 @@
                         <label><input type="checkbox" id="searchAuthor" checked> Author</label>
                         <label><input type="checkbox" id="searchNotes"> Creator's Notes</label>
                         <label><input type="checkbox" id="searchTagline"> Tagline</label>
+                        <label><input type="checkbox" id="searchDefinition"> Description &amp; Personality</label>
+                        <label><input type="checkbox" id="searchFirstMessage"> First &amp; Alternate Messages</label>
+                        <span id="qualitySearchStatus" role="status" aria-live="polite"></span>
                         <div class="dropdown-divider"></div>
                         <label><input type="checkbox" id="searchFavoritesOnly"> <i class="fa-solid fa-star" style="color: var(--cl-favorite-gold); margin-right: 2px;"></i> Favorites only</label>
                     </div>
@@ -162,6 +169,8 @@
                     <option value="tokens_high" data-icon="fa-solid fa-weight-hanging">Token Count (High to Low)</option>
                     <option value="tokens_low" data-icon="fa-solid fa-feather">Token Count (Low to High)</option>
                     <option value="random" data-icon="fa-solid fa-shuffle">Random</option>
+                    <option value="chats_most" data-icon="fa-solid fa-layer-group">Most Chats</option>
+                    <option value="chats_least" data-icon="fa-solid fa-comment">Least Chats</option>
                 </select>
 
                 <div class="filter-group" style="position: relative;">
@@ -224,9 +233,6 @@
                     <div id="moreOptionsMenu" class="dropdown-menu hidden">
                         <button id="importBtn" class="dropdown-item">
                             <i class="fa-solid fa-download"></i> Import Characters
-                        </button>
-                        <button id="lorebooksBtn" class="dropdown-item">
-                            <i class="fa-solid fa-book-atlas"></i> Lorebooks
                         </button>
                         <button id="tagsManagerBtn" class="dropdown-item">
                             <i class="fa-solid fa-tags"></i> Tags Manager
@@ -305,6 +311,9 @@
                     <button id="refreshChatsViewBtn" class="glass-btn icon-only" title="Refresh Chats">
                         <i class="fa-solid fa-sync"></i>
                     </button>
+                    <button id="chatsMultiSelectToggleBtn" class="glass-btn icon-only" title="Select multiple chats">
+                        <i class="fa-solid fa-check-double"></i>
+                    </button>
                 </div>
 
                 <!-- Online view - provider selector + filters -->
@@ -332,6 +341,26 @@
 
             <!-- Chats View (hidden by default) -->
             <div id="chatsView" class="chats-view hidden">
+                <div id="chatsMultiSelectToolbar" class="multi-select-toolbar hidden">
+                    <div class="multi-select-left">
+                        <div class="multi-select-badge">
+                            <i class="fa-solid fa-comments"></i>
+                            <span id="chatsMultiSelectCount">0</span>
+                        </div>
+                        <span class="multi-select-label">chats selected</span>
+                    </div>
+                    <div class="multi-select-actions">
+                        <button id="chatsMultiSelectAllBtn" class="ms-btn ms-btn-ghost" title="Select all visible chats">
+                            <i class="fa-solid fa-check-double"></i>
+                            <span>Select All</span>
+                        </button>
+                        <div class="ms-divider"></div>
+                        <button id="chatsMultiSelectDeleteBtn" class="ms-btn ms-btn-danger" title="Delete all selected chats">
+                            <i class="fa-solid fa-trash"></i>
+                            <span>Delete</span>
+                        </button>
+                    </div>
+                </div>
                 <div id="chatsGrid" class="chats-grid">
                     <!-- Chat cards will be injected here -->
                 </div>
@@ -464,7 +493,8 @@
                     
                     <div class="tab-pane active" id="pane-details">
                         <p class="meta-info">
-                            Created: <span id="modalDate"></span> 
+                            <span id="modalDateAddedContainer" title="When this card was added to your library">Added: <span id="modalDateAdded"></span></span>
+                            <span id="modalDateCreatedContainer" style="display:none" title="The date stated on the card itself (from the provider, or however the card was authored)">• Card Created: <span id="modalDateCreated"></span></span>
                             <span id="modalAuthorContainer" style="display:none">• Author: <a href="#" id="modalAuthor" class="creator-link" title="Click to filter by this creator"></a></span>
                             <span class="provider-link-indicator" id="providerLinkIndicator" title="Click to link to a provider">
                                 • <i class="fa-solid fa-link"></i> <span class="provider-link-text">Link</span>
@@ -574,29 +604,46 @@
                                 <label>Listing Name</label>
                                 <input type="search" id="editListingName" class="glass-input" placeholder="Provider page title shown as an alternate name" autocomplete="one-time-code">
                             </div>
+                            <div id="cl-nickname-section" class="form-group cl-nickname-section">
+                            </div>
                         </div>
 
                         <div class="edit-section">
                             <h4 class="section-header"><i class="fa-solid fa-scroll"></i> Character Definition</h4>
                             <div class="form-group expandable-field">
                                 <label>Description / Persona</label>
-                                <button type="button" class="expand-field-btn hidden" data-field="editDescription" data-label="Description / Persona" title="Expand editor">
-                                    <i class="fa-solid fa-expand"></i>
-                                </button>
+                                <div class="field-action-buttons">
+                                    <button type="button" class="expand-field-btn hidden" data-field="editDescription" data-label="Description / Persona" title="Expand editor">
+                                        <i class="fa-solid fa-expand"></i>
+                                    </button>
+                                    <button type="button" class="alt-field-btn hidden" data-save-key="alt_descriptions" data-target="editDescription" title="Manage alternate descriptions">
+                                        <i class="fa-solid fa-bars-staggered"></i> Alt.
+                                    </button>
+                                </div>
                                 <textarea id="editDescription" class="glass-input" rows="5" placeholder="Who is this character?" autocomplete="one-time-code"></textarea>
                             </div>
                             <div class="form-group expandable-field">
                                 <label>Personality Summary</label>
-                                <button type="button" class="expand-field-btn hidden" data-field="editPersonality" data-label="Personality Summary" title="Expand editor">
-                                    <i class="fa-solid fa-expand"></i>
-                                </button>
+                                <div class="field-action-buttons">
+                                    <button type="button" class="expand-field-btn hidden" data-field="editPersonality" data-label="Personality Summary" title="Expand editor">
+                                        <i class="fa-solid fa-expand"></i>
+                                    </button>
+                                    <button type="button" class="alt-field-btn hidden" data-save-key="alt_personalities" data-target="editPersonality" title="Manage alternate personalities">
+                                        <i class="fa-solid fa-bars-staggered"></i> Alt.
+                                    </button>
+                                </div>
                                 <textarea id="editPersonality" class="glass-input" rows="3" placeholder="Brief personality traits..." autocomplete="one-time-code"></textarea>
                             </div>
                             <div class="form-group expandable-field">
                                 <label>Scenario / Setting</label>
-                                <button type="button" class="expand-field-btn hidden" data-field="editScenario" data-label="Scenario / Setting" title="Expand editor">
-                                    <i class="fa-solid fa-expand"></i>
-                                </button>
+                                <div class="field-action-buttons">
+                                    <button type="button" class="expand-field-btn hidden" data-field="editScenario" data-label="Scenario / Setting" title="Expand editor">
+                                        <i class="fa-solid fa-expand"></i>
+                                    </button>
+                                    <button type="button" class="alt-field-btn hidden" data-save-key="alt_scenarios" data-target="editScenario" title="Manage alternate scenarios">
+                                        <i class="fa-solid fa-bars-staggered"></i> Alt.
+                                    </button>
+                                </div>
                                 <textarea id="editScenario" class="glass-input" rows="3" placeholder="The current situation..." autocomplete="one-time-code"></textarea>
                             </div>
                         </div>
@@ -623,9 +670,14 @@
                             </div>
                             <div class="form-group expandable-field">
                                 <label>Example Dialogue <span class="label-hint">(for training context)</span></label>
-                                <button type="button" class="expand-field-btn hidden" data-field="editMesExample" data-label="Example Dialogue" title="Expand editor">
-                                    <i class="fa-solid fa-expand"></i>
-                                </button>
+                                <div class="field-action-buttons">
+                                    <button type="button" class="expand-field-btn hidden" data-field="editMesExample" data-label="Example Dialogue" title="Expand editor">
+                                        <i class="fa-solid fa-expand"></i>
+                                    </button>
+                                    <button type="button" class="alt-field-btn hidden" data-save-key="alt_example_dialogue" data-target="editMesExample" title="Manage alternate example dialogues">
+                                        <i class="fa-solid fa-bars-staggered"></i> Alt.
+                                    </button>
+                                </div>
                                 <textarea id="editMesExample" class="glass-input" rows="5" placeholder="{{user}}: Hello!\n{{char}}: *waves* Hi there!" autocomplete="one-time-code"></textarea>
                             </div>
                         </div>
@@ -634,16 +686,26 @@
                             <h4 class="section-header"><i class="fa-solid fa-wand-magic-sparkles"></i> Advanced (Prompt Overrides)</h4>
                             <div class="form-group expandable-field">
                                 <label>System Prompt <span class="label-hint">(Main Prompt Override)</span></label>
-                                <button type="button" class="expand-field-btn hidden" data-field="editSystemPrompt" data-label="System Prompt" title="Expand editor">
-                                    <i class="fa-solid fa-expand"></i>
-                                </button>
+                                <div class="field-action-buttons">
+                                    <button type="button" class="expand-field-btn hidden" data-field="editSystemPrompt" data-label="System Prompt" title="Expand editor">
+                                        <i class="fa-solid fa-expand"></i>
+                                    </button>
+                                    <button type="button" class="alt-field-btn hidden" data-save-key="alt_main_prompts" data-target="editSystemPrompt" title="Manage alternate system prompts">
+                                        <i class="fa-solid fa-bars-staggered"></i> Alt.
+                                    </button>
+                                </div>
                                 <textarea id="editSystemPrompt" class="glass-input" rows="4" placeholder="Overrides your default system prompt..." autocomplete="one-time-code"></textarea>
                             </div>
                             <div class="form-group expandable-field">
                                 <label>Post-History Instructions <span class="label-hint">(Jailbreak)</span></label>
-                                <button type="button" class="expand-field-btn hidden" data-field="editPostHistoryInstructions" data-label="Post-History Instructions" title="Expand editor">
-                                    <i class="fa-solid fa-expand"></i>
-                                </button>
+                                <div class="field-action-buttons">
+                                    <button type="button" class="expand-field-btn hidden" data-field="editPostHistoryInstructions" data-label="Post-History Instructions" title="Expand editor">
+                                        <i class="fa-solid fa-expand"></i>
+                                    </button>
+                                    <button type="button" class="alt-field-btn hidden" data-save-key="alt_post_history" data-target="editPostHistoryInstructions" title="Manage alternate post-history instructions">
+                                        <i class="fa-solid fa-bars-staggered"></i> Alt.
+                                    </button>
+                                </div>
                                 <textarea id="editPostHistoryInstructions" class="glass-input" rows="4" placeholder="Instructions placed after chat history..." autocomplete="one-time-code"></textarea>
                             </div>
                             <div class="form-group expandable-field">
@@ -1570,7 +1632,7 @@ https://jannyai.com/characters/uuid_slug
                                 <li>The search bar supports <strong>text search</strong> (searches character names and descriptions) as well as <strong>JanitorAI URLs</strong> for direct lookup</li>
                                 <li>Tags use JanitorAI's own tag system (Male, Female, Anime, etc.)</li>
                                 <li>Creator names can be blank on grid cards (JanitorAI's search index omits them for some characters); they fill in on the preview when the character is also on DataCat</li>
-                                <li>Characters not yet on DataCat can be <strong>extracted</strong> on demand</li>
+                                <li>Request <strong>retrieval</strong> of supported upstream characters not yet on DataCat</li>
                             </ul>
                             <p><strong>JanitorAI (Hampter)</strong> sort orders (Latest, Trending, Trending 24h, Popular, Relevance):</p>
                             <ul>
@@ -1593,10 +1655,10 @@ https://jannyai.com/characters/uuid_slug
                             </ul>
                             <p><strong>What needs no setup at all:</strong> DataCat's own sorts and its MeiliSearch <code>janny_*</code> sorts, JannyAI browsing and search, and signing in. A JannyAI card will still import without the userscript, but with no personality and no greeting, which is not much of a character.</p>
                             <p>Cloudflare's pass expires on a fixed timer rather than on idleness, so it lapses often. The managed browser handles that itself; userscript <strong>v1.2.1+</strong> renews it by briefly opening the site in a background tab. On mobile, a userscript-capable browser such as Firefox for Android works.</p>
-                            <p><strong>Across all modes:</strong> Pasting a <strong>JanitorAI character URL</strong> into the search bar will look up the character on DataCat. If it's found, the preview opens directly. If not, an extraction panel appears letting you request the character from DataCat's cloud service.</p>
-                            <p><strong>Extraction:</strong> When a character only exists on JanitorAI and hasn't been indexed by DataCat yet, the Import button changes to <strong>Extract</strong>. This sends a request to DataCat's cloud service, which visits the JanitorAI page and retrieves the full character definition. You can also paste a JanitorAI URL directly into the search bar to look up and extract specific characters.</p>
-                            <p class="info-tip"><i class="fa-solid fa-lightbulb"></i> DataCat requires the cl-helper server plugin. Install it from Settings → Online → DataCat.</p>
-                            <p class="info-tip"><i class="fa-solid fa-arrows-rotate"></i> <strong>Re-extract on update checks:</strong> Toggle in Settings → Online → DataCat to force DataCat to pull fresh data from JanitorAI before each update check. Slower, but avoids comparisons against stale cached data on DataCat's side.</p>
+                            <p><strong>Across all modes:</strong> Pasting a <strong>JanitorAI, Saucepan, or Datacat character URL</strong> into the search bar looks up the character on DataCat. An available character opens in the preview. A missing upstream character offers retrieval; authentication, verification, restrictions, and service errors are reported separately.</p>
+                            <p><strong>Retrieval:</strong> The <strong>Retrieve</strong> action asks Datacat to collect a supported upstream character. Availability depends on Datacat and the creator's restrictions. Choose <strong>Source</strong> or <strong>Reimagination</strong> in the preview; imports and future linked-card updates retain that choice. Unavailable definitions cannot be selected.</p>
+                            <p class="info-tip"><i class="fa-solid fa-lightbulb"></i> DataCat requires cl-helper 1.13.1 or newer. Update the helper through Settings → Info, then restart SillyTavern. For verified downloads, install the <a href="../extras/datacat-direct-companion/README.html" target="_blank" rel="noopener noreferrer">Datacat Direct Import companion</a>. Choose Source or Reimagination in the preview and complete any verification in the Datacat tab. Batch update scans skip gated cards until you open a single-card check.</p>
+                            <p class="info-tip"><i class="fa-solid fa-arrows-rotate"></i> <strong>Retrieve again on update checks:</strong> Toggle in Settings → Online → DataCat to request fresh upstream data before comparing. This is slower and does not guarantee retrieval succeeds. Batch scans skip exports that require browser verification; a single-card check can open the verification panel.</p>
                         </div>
                         <div class="info-section">
                             <h4><i class="fa-solid fa-robot"></i> Botbooru</h4>
@@ -1615,7 +1677,7 @@ https://jannyai.com/characters/uuid_slug
                         </div>
                         <div class="info-section" id="helpJanitorai">
                             <h4><i class="fa-solid fa-broom"></i> JanitorAI</h4>
-                            <p>First-party access to janitorai.com. Roughly half of all JanitorAI characters withhold their <strong>hidden definition</strong> (the field is simply absent from the API), and this provider recovers them at the source. DataCat and JannyAI can recover hidden definitions too, but DataCat has been progressively closing itself off, and JannyAI's copies come without alternate greetings or creator browsing, so this is the complete, first-party path. Beta, and off by default.</p>
+                            <p>First-party access to janitorai.com. Roughly half of all JanitorAI characters withhold their <strong>hidden definition</strong> (the field is simply absent from the API), and this provider recovers them at the source. DataCat offers source exports and optional reimaginations with its own availability and verification rules. JannyAI's copies can omit alternate greetings and creator browsing. Beta, and off by default.</p>
                             <ul>
                                 <li>Browse and search janitorai.com directly, with its own sort orders (Latest, Trending, Trending 24h, Popular, Relevance)</li>
                                 <li>Filter by tags, NSFW toggle, and browse a single creator's characters</li>
@@ -2147,6 +2209,14 @@ https://jannyai.com/characters/uuid_slug
                         </div>
                         
                         <div class="settings-group">
+                            <div class="settings-group-title">Local card display (applies immediately)</div>
+                            <div class="settings-row checkboxes">
+                                <label><input type="checkbox" id="qualityTokenCounts" checked> Use ST tokenizer on visible cards</label>
+                                <label><input type="checkbox" id="qualityFollowTheme"> Follow SillyTavern theme</label>
+                            </div>
+                            <span class="settings-hint">Token counts cover card text, not the complete chat prompt. Theme matching keeps your library theme settings available when switched off.</span>
+                        </div>
+                        <div class="settings-group">
                             <div class="settings-group-title"><i class="fa-solid fa-search"></i> Search Defaults</div>
                             <div class="settings-row checkboxes">
                                 <label><input type="checkbox" id="settingsSearchName" checked> Character Name</label>
@@ -2310,6 +2380,12 @@ https://jannyai.com/characters/uuid_slug
                                     <input type="checkbox" id="settingsCollapseAllBrowseSections"> Collapse all browse preview sections by default
                                 </label>
                                 <span class="settings-hint">In online browse previews, start every section collapsed except creator's notes. Click a section title to toggle it open.</span>
+                            </div>
+                            <div class="settings-row">
+                                <label>
+                                    <input type="checkbox" id="settingsAlwaysEdit"> Skip edit lock — fields unlocked by default
+                                </label>
+                                <span class="settings-hint">When enabled, the Edit tab opens with fields already unlocked (no need to click "Unlock Editing" each time).</span>
                             </div>
                         </div>
 
@@ -2493,6 +2569,15 @@ https://jannyai.com/characters/uuid_slug
                             </div>
                         </div>
 
+                        <!-- Provider Hide Defaults -->
+                        <div class="settings-group" id="providerHideDefaultsGroup">
+                            <div class="settings-group-title"><i class="fa-solid fa-eye-slash"></i> Provider Hide Defaults</div>
+                            <p class="settings-hint" style="margin-bottom: 12px;">When enabled, the Online tab hides cards matching these filters by default for the selected provider.</p>
+                            <div id="providerHideDefaultsList">
+                                <!-- Populated dynamically by JS -->
+                            </div>
+                        </div>
+
                         <!-- Infinite Scroll -->
                         <div class="settings-group" id="infiniteScrollGroup">
                             <div class="settings-group-title"><i class="fa-solid fa-arrow-down-wide-short"></i> Infinite Scroll</div>
@@ -2523,6 +2608,51 @@ https://jannyai.com/characters/uuid_slug
                                 <i class="fa-solid fa-chevron-right provider-chevron"></i>
                             </summary>
                             <div class="settings-provider-body">
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-network-wired"></i> Gateway (optional)</div>
+                                    <div class="settings-row">
+                                        <label for="settingsChubGatewayBaseUrl">Base URL:</label>
+                                        <div class="settings-input-group">
+                                            <input type="text" id="settingsChubGatewayBaseUrl" placeholder="https://your-proxy.example.com">
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label for="settingsChubGatewayKey">Bearer Key:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsChubGatewayKey" placeholder="Bearer token" autocomplete="new-password" data-sensitive="true">
+                                            <button id="toggleChubGatewayKeyVisibility" class="glass-btn icon-only" title="Show/Hide">
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Optional. Leave Base URL empty for direct chub.ai access. When set, the proxy is expected to expose <code>/v1/chub</code>, <code>/v1/chub-gw</code>, and <code>/v1/chub-av/avatars/</code>. A reference implementation is available at <a href="https://github.com/AdamsGH/charlib-proxy" target="_blank" rel="noopener">AdamsGH/charlib-proxy</a>.</span>
+                                    </div>
+                                    <details class="settings-advanced">
+                                        <summary>Advanced: per-host overrides</summary>
+                                        <div class="settings-row">
+                                            <label for="settingsChubGatewayApiUrl">API:</label>
+                                            <div class="settings-input-group">
+                                                <input type="text" id="settingsChubGatewayApiUrl" placeholder="overrides Base URL + /v1/chub">
+                                            </div>
+                                        </div>
+                                        <div class="settings-row">
+                                            <label for="settingsChubGatewayGatewayUrl">Gateway:</label>
+                                            <div class="settings-input-group">
+                                                <input type="text" id="settingsChubGatewayGatewayUrl" placeholder="overrides Base URL + /v1/chub-gw">
+                                            </div>
+                                        </div>
+                                        <div class="settings-row">
+                                            <label for="settingsChubGatewayAvatarUrl">Avatar Base:</label>
+                                            <div class="settings-input-group">
+                                                <input type="text" id="settingsChubGatewayAvatarUrl" placeholder="overrides Base URL + /v1/chub-av/avatars/">
+                                            </div>
+                                        </div>
+                                        <div class="settings-row">
+                                            <span class="settings-hint">Each field, when set, replaces the corresponding host directly. Avatar base must end with a slash.</span>
+                                        </div>
+                                    </details>
+                                </div>
                                 <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-key"></i> Authentication</div>
                                     <div class="settings-row">
@@ -2558,6 +2688,62 @@ https://jannyai.com/characters/uuid_slug
                                             <input type="text" class="glass-input provider-exclude-tags-input" id="chubExcludeTagsInput" placeholder="Type a tag and press Enter" autocomplete="off">
                                         </div>
                                         <span class="settings-hint">Tags entered here are always excluded from ChubAI browse results.</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </details>
+
+                        <!-- CharaVault provider settings -->
+                        <details class="settings-provider-section" id="settingsCharavaultSection">
+                            <summary>
+                                <i class="fa-solid fa-vault provider-icon"></i> CharaVault
+                                <i class="fa-solid fa-chevron-right provider-chevron"></i>
+                            </summary>
+                            <div class="settings-provider-body">
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-network-wired"></i> Gateway (optional)</div>
+                                    <div class="settings-row">
+                                        <label for="settingsCharavaultGatewayUrl">Gateway URL:</label>
+                                        <div class="settings-input-group">
+                                            <input type="text" id="settingsCharavaultGatewayUrl" placeholder="Leave empty for direct charavault.net access">
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label for="settingsCharavaultGatewayKey">Gateway Key:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsCharavaultGatewayKey" placeholder="Bearer token" autocomplete="new-password" data-sensitive="true">
+                                            <button id="toggleCharavaultGatewayKeyVisibility" class="glass-btn icon-only" title="Show/Hide">
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Optional. Only fill these if you proxy CharaVault through a self-hosted gateway. Leave both empty for direct access. A reference implementation is available at <a href="https://github.com/AdamsGH/charlib-proxy" target="_blank" rel="noopener">AdamsGH/charlib-proxy</a>.</span>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-key"></i> Authentication</div>
+                                    <div class="settings-row">
+                                        <label for="settingsCharavaultAppPassword">App Password:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsCharavaultAppPassword" placeholder="cv_..." autocomplete="new-password" data-sensitive="true">
+                                            <button id="toggleCharavaultAppPasswordVisibility" class="glass-btn icon-only" title="Show/Hide">
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Optional. CharaVault app password (cv_...) for higher rate limits and downloads. Generate one at <a href="https://charavault.net/account/app-passwords" target="_blank" rel="noopener">charavault.net</a>.</span>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-ban"></i> Exclude Tags</div>
+                                    <div class="settings-row">
+                                        <div class="provider-exclude-tags-container">
+                                            <div class="provider-exclude-tags-pills" id="charavaultExcludeTagsPills"></div>
+                                            <input type="text" class="glass-input provider-exclude-tags-input" id="charavaultExcludeTagsInput" placeholder="Type a tag and press Enter" autocomplete="off">
+                                        </div>
+                                        <span class="settings-hint">Tags entered here are always excluded from CharaVault browse results.</span>
                                     </div>
                                 </div>
                             </div>
@@ -2793,6 +2979,51 @@ https://jannyai.com/characters/uuid_slug
                                     </div>
                                 </div>
                                 <div class="settings-group" id="ctSettingsFields">
+                                    <div class="settings-group-title"><i class="fa-solid fa-network-wired"></i> Gateway (optional)</div>
+                                    <div class="settings-row">
+                                        <label for="settingsChartavernGatewayBaseUrl">Base URL:</label>
+                                        <div class="settings-input-group">
+                                            <input type="text" id="settingsChartavernGatewayBaseUrl" placeholder="https://your-proxy.example.com">
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label for="settingsChartavernGatewayKey">Bearer Key:</label>
+                                        <div class="settings-input-group">
+                                            <input type="password" id="settingsChartavernGatewayKey" placeholder="Bearer token" autocomplete="new-password" data-sensitive="true">
+                                            <button id="toggleChartavernGatewayKeyVisibility" class="glass-btn icon-only" title="Show/Hide">
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Optional. Leave Base URL empty for direct character-tavern.com access. When set, the proxy is expected to expose <code>/v1/ct</code>, <code>/v1/ct-site</code>, and <code>/v1/ct-cdn</code>. A reference implementation is available at <a href="https://github.com/AdamsGH/charlib-proxy" target="_blank" rel="noopener">AdamsGH/charlib-proxy</a>.</span>
+                                    </div>
+                                    <details class="settings-advanced">
+                                        <summary>Advanced: per-host overrides</summary>
+                                        <div class="settings-row">
+                                            <label for="settingsChartavernGatewayApiUrl">API:</label>
+                                            <div class="settings-input-group">
+                                                <input type="text" id="settingsChartavernGatewayApiUrl" placeholder="overrides Base URL + /v1/ct">
+                                            </div>
+                                        </div>
+                                        <div class="settings-row">
+                                            <label for="settingsChartavernGatewaySiteUrl">Site:</label>
+                                            <div class="settings-input-group">
+                                                <input type="text" id="settingsChartavernGatewaySiteUrl" placeholder="overrides Base URL + /v1/ct-site">
+                                            </div>
+                                        </div>
+                                        <div class="settings-row">
+                                            <label for="settingsChartavernGatewayCdnUrl">Cards CDN:</label>
+                                            <div class="settings-input-group">
+                                                <input type="text" id="settingsChartavernGatewayCdnUrl" placeholder="overrides Base URL + /v1/ct-cdn">
+                                            </div>
+                                        </div>
+                                        <div class="settings-row">
+                                            <span class="settings-hint">Each field, when set, replaces the corresponding host directly.</span>
+                                        </div>
+                                    </details>
+                                </div>
+                                <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-cookie-bite"></i> Session Cookies</div>
                                     <div class="settings-row">
                                         <label for="settingsCtCookie">Cookie String:</label>
@@ -2884,7 +3115,7 @@ https://jannyai.com/characters/uuid_slug
                         <details class="settings-provider-section" id="settingsDatacatSection">
                             <summary>
                                 <i class="fa-solid fa-cat provider-icon"></i> DataCat
-                                <span class="settings-provider-badge deprecated">Deprecated</span>
+                                <span class="settings-provider-badge">Experimental</span>
                                 <i class="fa-solid fa-chevron-right provider-chevron"></i>
                             </summary>
                             <div class="settings-provider-body">
@@ -2892,7 +3123,7 @@ https://jannyai.com/characters/uuid_slug
                                     <i class="fa-solid fa-puzzle-piece"></i>
                                     <div>
                                         <strong>cl-helper plugin required</strong>
-                                        <span>DataCat requires the cl-helper server plugin for API proxying. <a href="#" class="cl-goto-info">Open cl-helper status &rarr;</a></span>
+                                        <span>DataCat requires cl-helper 1.13.1 or newer. Update the plugin and restart SillyTavern. <a href="#" class="cl-goto-info">Open cl-helper status &rarr;</a></span>
                                     </div>
                                 </div>
                                 <div class="settings-group" id="datacatSettingsFields">
@@ -2928,33 +3159,39 @@ https://jannyai.com/characters/uuid_slug
                                     </div>
                                 </div>
                                 <div class="settings-group">
-                                    <div class="settings-group-title"><i class="fa-solid fa-cloud-arrow-down"></i> Extraction</div>
+                                    <div class="settings-group-title"><i class="fa-solid fa-cloud-arrow-down"></i> Retrieval</div>
                                     <div class="settings-row">
                                         <label class="settings-checkbox-label">
                                             <input type="checkbox" id="datacatPublicFeedCheckbox">
-                                            <span>Publish extracted characters on DataCat</span>
+                                            <span>Publish retrieved characters on DataCat</span>
                                         </label>
                                     </div>
                                     <div class="settings-row">
-                                        <span class="settings-hint">When enabled, extracted characters appear on the public DataCat feed and are accessible via URL. Disable to keep extractions private (API-only access).</span>
+                                        <span class="settings-hint">Requests public-feed visibility for retrieved characters. When disabled, retrieval requests use Datacat’s Yours visibility. Datacat controls final availability.</span>
                                     </div>
                                     <div class="settings-row">
                                         <label class="settings-checkbox-label">
                                             <input type="checkbox" id="datacatReextractOnUpdateCheckbox">
-                                            <span>Re-extract characters on update checks</span>
+                                            <span>Retrieve fresh data on update checks</span>
                                         </label>
                                     </div>
                                     <div class="settings-row">
-                                        <span class="settings-hint">Force DataCat to re-extract character data from JanitorAI before checking for updates. Slower, but ensures comparisons use fresh data instead of a stale cache.</span>
+                                        <span class="settings-hint">Request fresh JanitorAI or Saucepan data before comparing a linked card. Native Datacat uploads are not retrieved externally. The comparison uses the definition choice saved with the card.</span>
                                     </div>
                                     <div class="settings-row">
                                         <span class="settings-hint"><strong>Hampter sorts need the companion userscript.</strong> Latest, Trending, Trending 24h, Popular and Relevance are served by JanitorAI behind Cloudflare, and the userscript (<code>extras/cl-janitor-bridge.user.js</code>, Tampermonkey or Violentmonkey) is what reaches them: it borrows the Cloudflare pass from the browser you are reading this in. Every other DataCat sort works without it. <a href="#" id="hampterHelpLink">More in Help &amp; Tips.</a></span>
                                     </div>
                                 </div>
                                 <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-file-export"></i> Verified exports</div>
+                                    <div class="settings-row"><span class="settings-hint">Choose Source or Reimagination in the preview. Source is the default; your choice is saved for updates. If Datacat requires human verification, CharacterLibrary opens its export panel.</span></div>
+                                    <div class="settings-row"><span class="settings-hint">Install the optional <a href="../extras/cl-datacat-bridge.user.js" target="_blank" rel="noopener noreferrer">Datacat Export Companion userscript</a> in Tampermonkey or Violentmonkey, then click Export to Character Library inside Datacat. Complete verification there. Credentials stay on Datacat; this is separate from the JanitorAI Hampter bridge.</span></div>
+                                    <div class="settings-row"><span class="settings-hint">Batch update scans skip cards marked Verification required. Open a single-card update check to verify and compare them.</span></div>
+                                </div>
+                                <div class="settings-group">
                                     <div class="settings-group-title"><i class="fa-solid fa-user-lock"></i> JanitorAI Login (Hampter pagination)</div>
                                     <div class="settings-row">
-                                        <span class="settings-hint">Optional, and separate from the JanitorAI provider's own login. JanitorAI serves only the <strong>first page</strong> of the Hampter sorts without an account. Paste your session cookie to page through more; the session then <strong>refreshes itself</strong> (no repeated pasting). To get it: log in at <strong>janitorai.com</strong>, open DevTools (F12) &rarr; <strong>Application &rarr; Cookies &rarr; janitorai.com</strong>, and copy the value of the cookie whose name starts with <strong>sb-</strong> and ends in <strong>-auth-token</strong> (today <strong>sb-mcmzxtzommpnxkynddbo-auth-token</strong>). Stored locally in your browser. Tip: paste from a browser you are not actively browsing JanitorAI in, so the two sessions do not rotate each other out.</span>
+                                        <span class="settings-hint">Optional, and separate from the JanitorAI provider's own login. JanitorAI serves only the <strong>first page</strong> of the Hampter sorts without an account. Paste your session cookie to page through more; the session then <strong>refreshes itself</strong> (no repeated pasting). To get it: log in at <strong>janitorai.com</strong>, open DevTools (F12) &rarr; <strong>Application &rarr; Cookies &rarr; janitorai.com</strong>, and copy the value of the cookie whose name starts with <strong>sb-</strong> and ends in <strong>-auth-token</strong> (today <strong>sb-mcmzxtzommpnxkynddbo-auth-token</strong>). If the cookie is split into <strong>.0</strong> and <strong>.1</strong> parts, join their values in order. Stored locally in your browser. Tip: paste from a browser you are not actively browsing JanitorAI in, so the two sessions do not rotate each other out.</span>
                                     </div>
                                     <div class="settings-row">
                                         <label>Cookie:</label>
@@ -2975,6 +3212,24 @@ https://jannyai.com/characters/uuid_slug
                                     </div>
                                     <div class="settings-row">
                                         <span id="datacatJanitoraiTokenStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Not logged in</span>
+                                    </div>
+                                </div>
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="fa-solid fa-fire"></i> FlareSolverr (Hampter fallback)</div>
+                                    <div class="settings-row">
+                                        <span class="settings-hint">Optional fallback. JanitorAI's <strong>Trending</strong> and <strong>Popular</strong> sort orders normally load directly with no setup; if Cloudflare ever blocks that direct fetch, a <a href="https://github.com/FlareSolverr/FlareSolverr" target="_blank" rel="noopener noreferrer">FlareSolverr</a> instance configured here is used as a backup fetcher. JanitorAI serves only the first page of these sorts without an account, regardless of fetch method.</span>
+                                    </div>
+                                    <div class="settings-row">
+                                        <label>URL:</label>
+                                        <div class="settings-input-group">
+                                            <input type="url" id="settingsDatacatFlareSolverrUrl" class="glass-input" placeholder="http://localhost:8191/v1" autocomplete="off">
+                                            <button id="testDatacatFlareSolverrBtn" class="settings-verify-btn" title="Test FlareSolverr connection">
+                                                <i class="fa-solid fa-plug-circle-check"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="settings-row">
+                                        <span id="datacatFlareSolverrStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Not configured</span>
                                     </div>
                                 </div>
                                 <div class="settings-group">
@@ -3019,13 +3274,13 @@ https://jannyai.com/characters/uuid_slug
                                     <div class="settings-row">
                                         <label>Handle:</label>
                                         <div class="settings-input-group">
-                                            <input type="text" id="settingsSaucepanHandle" placeholder="Saucepan handle" autocomplete="username">
+                                            <input type="text" id="settingsSaucepanHandle" class="glass-input" placeholder="Saucepan handle" autocomplete="username">
                                         </div>
                                     </div>
                                     <div class="settings-row">
                                         <label>Password:</label>
                                         <div class="settings-input-group">
-                                            <input type="password" id="settingsSaucepanPassword" placeholder="Password (not stored)" autocomplete="current-password">
+                                            <input type="password" id="settingsSaucepanPassword" class="glass-input" placeholder="Password (not stored)" autocomplete="current-password" data-sensitive="true">
                                             <button id="toggleSaucepanPasswordVisibility" class="glass-btn icon-only" title="Show/Hide">
                                                 <i class="fa-solid fa-eye"></i>
                                             </button>
@@ -3037,7 +3292,7 @@ https://jannyai.com/characters/uuid_slug
                                     <div class="settings-row">
                                         <label>Token:</label>
                                         <div class="settings-input-group">
-                                            <input type="password" id="settingsSaucepanToken" placeholder="No token" autocomplete="off" spellcheck="false">
+                                            <input type="password" id="settingsSaucepanToken" placeholder="No token" autocomplete="off" spellcheck="false" data-sensitive="true">
                                             <button id="toggleSaucepanTokenVisibility" class="glass-btn icon-only" title="Show/Hide">
                                                 <i class="fa-solid fa-eye"></i>
                                             </button>
@@ -3050,6 +3305,7 @@ https://jannyai.com/characters/uuid_slug
                                         </div>
                                     </div>
                                     <div class="settings-row" style="gap: var(--space-sm);">
+                                        <span id="saucepanTokenStatus" class="settings-status-badge inactive"><i class="fa-solid fa-circle"></i> Not logged in</span>
                                         <button id="saucepanClearTokenBtn" class="settings-action-btn danger">
                                             <i class="fa-solid fa-trash-can"></i> Clear Token
                                         </button>
@@ -3062,6 +3318,7 @@ https://jannyai.com/characters/uuid_slug
                                             <div class="provider-exclude-tags-pills" id="saucepanExcludeTagsPills"></div>
                                             <input type="text" class="glass-input provider-exclude-tags-input" id="saucepanExcludeTagsInput" placeholder="Type a tag and press Enter" autocomplete="off">
                                         </div>
+                                        <span class="settings-hint">Tags entered here are always excluded from Saucepan browse results.</span>
                                     </div>
                                 </div>
                             </div>
@@ -3426,7 +3683,20 @@ https://jannyai.com/characters/uuid_slug
                                 <span class="settings-hint"><i class="fa-solid fa-hand-point-right"></i> Unmatched images remain in the original folder for manual handling.</span>
                             </div>
                         </div>
-                        
+
+                        <div class="settings-group">
+                            <div class="settings-group-title"><i class="fa-solid fa-link"></i> Step 3: Fix Chat Links</div>
+                            <span class="settings-hint">Moving images out of a character's old folder leaves chat messages that attached those images (AI-generated inline images, Stable Diffusion output, manually attached files, etc.) pointing at the old, now-empty location — on either side of the conversation. This scans chats for messages whose attached image no longer exists in its recorded folder but does exist under the character's current folder, and repoints them.</span>
+                            <div class="settings-row" style="margin-top: 8px;">
+                                <button id="fixChatMediaLinksBtn" class="settings-action-btn">
+                                    <i class="fa-solid fa-link"></i> Fix Chat Links
+                                </button>
+                            </div>
+                            <div class="settings-row" id="fixChatMediaLinksStatus" style="display: none;">
+                                <span class="settings-hint" id="fixChatMediaLinksStatusText" style="color: var(--accent);"></span>
+                            </div>
+                        </div>
+
                         <div class="settings-group">
                             <div class="settings-group-title"><i class="fa-solid fa-map"></i> Reference</div>
                             <div class="settings-row">
@@ -3624,12 +3894,29 @@ https://jannyai.com/characters/uuid_slug
         </div>
     </div>
 
+    <!-- Alt Descriptions Modal -->
+    <div id="altDescriptionsModal" class="cl-modal">
+        <div class="cl-modal-overlay"></div>
+        <div class="cl-modal-content">
+            <div class="cl-modal-header">
+                <h3 id="altModalTitle">Alternate Field</h3>
+                <button class="cl-modal-close" id="closeAltDescriptionsModal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="cl-modal-body" id="altDescriptionsModalBody">
+            </div>
+            <div class="cl-modal-footer">
+                <button type="button" id="altModalAddBtn" class="cl-btn cl-btn-secondary"><i class="fa-solid fa-plus"></i> Add New</button>
+                <button type="button" id="altModalDoneBtn" class="cl-btn cl-btn-primary">Done</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast container - placed last to guarantee it renders above all modals -->
     <div id="toastContainer" class="toast-container"></div>
 
     <!-- Scripts -->
-    <script src="library.js?v=200"></script>
-    <script type="module" src="../modules/module-loader.js?v=51"></script>
+    <script src="library.js?v=integrated15"></script>
+    <script type="module" src="../modules/module-loader.js?v=integrated15"></script>
     <script src="library-mobile.js?v=26"></script>
 </body>
 </html>

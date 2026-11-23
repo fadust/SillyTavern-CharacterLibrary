@@ -19,6 +19,7 @@ import {
     resolveSaucepanImageUrl,
     fetchSaucepanCompanion,
     submitSaucepanExtraction,
+    fetchSaucepanLorebook,
     buildV2FromSaucepan,
     hitFromCompanion,
     saucepanCompanionUrl,
@@ -64,6 +65,10 @@ class SaucepanProvider extends ProviderBase {
     get icon() { return 'fa-solid fa-utensils'; }
     get iconUrl() { return 'https://saucepan.ai/favicon.ico'; }
     get beta() { return true; }
+    // Fork (Rayas-Tavern): Saucepan is the first-class provider here, enabled by
+    // default. Upstream ships it disabled; keeping `false` also means the
+    // reconcileNewDisabledByDefault opt-out never touches it, so a user's choice
+    // to enable it persists across saves.
     get disabledByDefault() { return true; }
     get enableWarning() { return 'Saucepan is an experimental source. Native definition extraction requires a Saucepan account (Bearer token) configured in this provider\'s settings.'; }
     get minClHelperVersion() { return '1.9.0'; }
@@ -168,7 +173,7 @@ class SaucepanProvider extends ProviderBase {
     async fetchLinkStats(linkInfo) {
         if (!linkInfo?.id) return null;
         try {
-            const companion = await fetchSaucepanCompanion(linkInfo.id);
+            const companion = await fetchSaucepanCompanion(linkInfo.id, { strict: true });
             if (!companion) return null;
             const chats = parseInt(companion.chat_count, 10) || 0;
             const favorites = parseInt(companion.favorite_count, 10) || 0;
@@ -202,9 +207,12 @@ class SaucepanProvider extends ProviderBase {
             const extractResult = await submitSaucepanExtraction(saucepanCompanionUrl(linkInfo.id));
             if (!extractResult.success) {
                 api?.debugLog?.('[SaucepanProvider] native extraction failed:', extractResult.error);
-                return null;
+                throw Object.assign(new Error(extractResult.error || 'Saucepan definition could not be retrieved'), {
+                    code: extractResult.locked ? 'creator_restricted' : 'export_failed',
+                });
             }
             const result = buildV2FromSaucepan(hit, extractResult);
+            if (!result) throw new Error('Saucepan returned an invalid or empty definition');
             if (result) {
                 result._listingName = this.getListingName(hit);
                 // extraction never fetches a lorebook, so character_book is unread, not empty
@@ -221,7 +229,8 @@ class SaucepanProvider extends ProviderBase {
             return result;
         } catch (e) {
             console.error('[SaucepanProvider] fetchRemoteCard failed:', linkInfo.id, e);
-            return null;
+            if (e.notFound) return null;
+            throw e;
         }
     }
 
@@ -407,7 +416,11 @@ class SaucepanProvider extends ProviderBase {
             if (!extractResult.success) {
                 throw new Error(extractResult.error || 'Saucepan extraction failed');
             }
-            const characterCard = buildV2FromSaucepan(hit, extractResult);
+            // Fetch the companion's lorebook for the auto-link. Non-blocking on failure:
+            // a locked/unreachable lorebook must never block the card import.
+            const [lorebook] = await Promise.allSettled([fetchSaucepanLorebook(hit)]);
+            const characterBook = lorebook.status === 'fulfilled' ? lorebook.value : null;
+            const characterCard = buildV2FromSaucepan(hit, extractResult, characterBook);
             if (!characterCard?.data) throw new Error('Failed to build character card (empty definition)');
 
             const characterName = characterCard.data.name || hit.name || 'Unnamed';

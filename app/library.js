@@ -13,8 +13,11 @@ window.registerOverlay = window.registerOverlay || function(cfg) {
 };
 
 const API_BASE = '/api'; 
-const isEmbedded = new URLSearchParams(window.location.search).get('embedded') === '1';
-const embeddedShowTopBar = new URLSearchParams(window.location.search).get('showTopBar') === '1';
+const _launchParams = new URLSearchParams(window.location.search);
+const isEmbedded = _launchParams.get('embedded') === '1';
+const embeddedShowTopBar = _launchParams.get('showTopBar') === '1';
+const launchLorebooks = _launchParams.get('open') === 'lorebooks';
+const launchLorebooksOnly = _launchParams.get('lorebooksOnly') === '1';
 let allCharacters = [];
 let currentCharacters = [];
 
@@ -465,6 +468,8 @@ function makeCharSortComparator() {
         if (sortType === 'date_old') return a._dateAdded - b._dateAdded;
         if (sortType === 'created_new') return b._createDate - a._createDate;
         if (sortType === 'created_old') return a._createDate - b._createDate;
+        if (sortType === 'chats_most') return getChatCount(b) - getChatCount(a);
+        if (sortType === 'chats_least') return getChatCount(a) - getChatCount(b);
         if (sortType === 'tokens_high' || sortType === 'tokens_low') {
             const ta = a._tokenEstimate, tb = b._tokenEstimate;
             const ua = ta == null, ub = tb == null;
@@ -496,7 +501,7 @@ function prepareCharacterKeys(chars) {
         c._lowerCreator = String(c.creator || c.data?.creator || '').toLowerCase();
         c._lowerListingName = (getListingNameFromExtensions(c) || '').toLowerCase();
         c._lowerTagline = getDisplayTagline(c).toLowerCase();
-        const tags = getTags(c);
+        const tags = getFilterableTags(c);
         c._tagsLower = tags.length > 0 ? tags.join(' ').toLowerCase() : '';
         c._lowerNotes = String(c.creator_notes || c.data?.creator_notes || '').toLowerCase();
         // Pre-compute numeric timestamps for date sorting
@@ -512,6 +517,53 @@ function prepareCharacterKeys(chars) {
             _tokenEstimateCache.set(c.avatar, c._tokenEstimate);
         }
     }
+}
+
+// ========================================
+// CHAT COUNT CACHE (for "Most/Least Chats" sort)
+// ========================================
+
+// Maps avatar filename → number of chat sessions.
+// Populated lazily when the user selects chats_most / chats_least sort.
+const _chatCountCache = new Map();
+let _chatCountLoading = false;
+
+/**
+ * Lazy-load chat counts for all characters via batched API calls.
+ * Caches results in _chatCountCache so subsequent sorts are instant.
+ * Characters with unknown counts are treated as 0 until loaded.
+ */
+async function ensureChatCountsLoaded() {
+    if (_chatCountCache.size > 0 || _chatCountLoading) return;
+    _chatCountLoading = true;
+    const BATCH_SIZE = 5;
+    const avatars = allCharacters.map(c => c.avatar).filter(Boolean);
+    for (let i = 0; i < avatars.length; i += BATCH_SIZE) {
+        const batch = avatars.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async (avatar) => {
+            try {
+                // Request full chat info (not simple) to get chat_items per file.
+                // Sum across all chat sessions for total message count.
+                const response = await apiRequest(ENDPOINTS.CHARACTERS_CHATS, 'POST', { avatar_url: avatar });
+                const chats = response.ok ? await response.json() : [];
+                if (Array.isArray(chats)) {
+                    const totalMessages = chats.reduce((sum, chat) => sum + (chat.chat_items || 0), 0);
+                    _chatCountCache.set(avatar, totalMessages);
+                } else {
+                    _chatCountCache.set(avatar, 0);
+                }
+            } catch {
+                _chatCountCache.set(avatar, 0);
+            }
+        }));
+    }
+    _chatCountLoading = false;
+}
+
+/** Get cached chat count for a character (0 if not loaded yet). */
+function getChatCount(char) {
+    if (!char?.avatar) return 0;
+    return _chatCountCache.get(char.avatar) ?? 0;
 }
 
 // ========================================
@@ -536,13 +588,14 @@ const DEFAULT_SETTINGS = {
     wyvernUid: null,
     wyvernRememberCredentials: true,
     datacatToken: null,
+    saucepanToken: null,
     datacatPublicFeed: false,
     datacatReextractOnUpdate: false,
+    datacatFlareSolverrUrl: '',
     // Separate from the janitorai* pair below: the refresh token is single-use and rotates, so a
     // shared pair breaks whichever provider refreshes second.
     datacatJanitoraiToken: null,
     datacatJanitoraiRefreshToken: null,
-    saucepanToken: null,
     janitoraiToken: null,
     janitoraiRefreshToken: null,
     // Kept so a lapsed session can be renewed without hunting for the password again.
@@ -564,6 +617,19 @@ const DEFAULT_SETTINGS = {
     botbooruUseTagWeights: false,
     ctCookie: null,
     ctAutoKeepAlive: true,
+    charavaultAppPassword: null,
+    charavaultGatewayUrl: null,
+    charavaultGatewayKey: null,
+    chubGatewayBaseUrl: null,
+    chubGatewayApiUrl: null,
+    chubGatewayGatewayUrl: null,
+    chubGatewayAvatarUrl: null,
+    chubGatewayKey: null,
+    chartavernGatewayBaseUrl: null,
+    chartavernGatewayApiUrl: null,
+    chartavernGatewaySiteUrl: null,
+    chartavernGatewayCdnUrl: null,
+    chartavernGatewayKey: null,
     civitaiApiKey: null,
     pixivCookie: null,
 
@@ -648,6 +714,7 @@ const DEFAULT_SETTINGS = {
     gridThumbnailsClHelper: true,
     gridThumbnailSize: 512,
     enableCharDetailNav: true,
+    alwaysEditEnabled: false,
 
     // ---- Provider Config ----
     chubUseV4Api: false,
@@ -740,11 +807,12 @@ async function probeSTSentinelSupport() {
         }
     } catch { /* host window may be cross-origin or opener-detached in re-opened tabs */ }
     try {
-        // /api/extensions/version exists on current ST and returns plain text version.
-        const resp = await fetch('/api/extensions/version', { headers: getRequestHeaders() });
+        // The application version is JSON at /version. /api/extensions/version
+        // is a POST endpoint for inspecting an installed extension's Git state.
+        const resp = await fetch('/version');
         if (resp.ok) {
-            const v = (await resp.text()).trim();
-            if (v && compareSemverParts(v, ST_MIN_VERSION_FOR_SENTINEL) >= 0) { debugLog('[ST sentinel] detected via /api/extensions/version:', v); return true; }
+            const v = (await resp.json()).pkgVersion;
+            if (v && compareSemverParts(String(v), ST_MIN_VERSION_FOR_SENTINEL) >= 0) { debugLog('[ST sentinel] detected via /version:', v); return true; }
         }
     } catch { /* endpoint may not exist on older ST */ }
     try {
@@ -784,6 +852,13 @@ async function fetchStSettings() {
 
 // Mirrors ST's name-to-url proxy lookup; "None" forced empty to stop shared-entry leak.
 async function resolveProxyForProfile(profile) {
+    const text = value => typeof value === 'string' ? value.trim() : '';
+    if (profile && profile.proxy !== 'None') {
+        const nested = typeof profile.proxy === 'object' ? profile.proxy : {};
+        const url = text(profile.reverse_proxy) || text(profile['reverse-proxy']) || text(profile.reverseProxy)
+            || text(nested.url) || text(nested.reverse_proxy) || text(nested.reverseProxy);
+        if (url) return { url, password: text(profile.proxy_password) || text(profile['proxy-password']) || text(profile.proxyPassword) || text(nested.password) };
+    }
     try {
         const st = await fetchStSettings();
         const settings = st?.settings;
@@ -982,7 +1057,10 @@ async function callLLM(messages, opts = {}) {
         }
         if (response.status === 404) continue;
         if (!response.ok) {
-            const errText = await response.text().catch(() => '');
+            const errText = await response.text().catch(err => {
+                if (err.name === 'AbortError' || signal?.aborted) throw cancelled();
+                return '';
+            });
             throw new Error(`API returned ${response.status}: ${errText.slice(0, 300)}`);
         }
 
@@ -1022,8 +1100,10 @@ async function callLLM(messages, opts = {}) {
 
 // Append the OpenAI chat-completions path unless the URL already ends with it.
 function resolveCustomEndpoint(base) {
-    const u = (base || '').trim().replace(/\/+$/, '');
-    return /\/chat\/completions$/i.test(u) ? u : `${u}/chat/completions`;
+    // Append to the path, preserving query parameters used by compatible APIs.
+    const [, path, suffix] = (base || '').trim().match(/^([^?#]*)(.*)$/);
+    const normalized = path.replace(/\/+$/, '');
+    return (/\/chat\/completions$/i.test(normalized) ? normalized : `${normalized}/chat/completions`) + suffix;
 }
 
 /**
@@ -1210,23 +1290,103 @@ async function loadGallerySettings() {
 // ============================================================
 
 function migrateSettings() {
+    let changed = false;
+
     if (gallerySettings.includeChubGallery !== undefined) {
         gallerySettings.includeProviderGallery = gallerySettings.includeChubGallery;
         delete gallerySettings.includeChubGallery;
-        saveGallerySettings();
+        changed = true;
     }
     if ('showChubTagline' in gallerySettings) {
         gallerySettings.showProviderTagline = gallerySettings.showChubTagline;
         delete gallerySettings.showChubTagline;
-        saveGallerySettings();
+        changed = true;
     }
     // not in DEFAULT_SETTINGS anymore, so presence here means a real saved value (existing install)
     if ('notifyAdditionalContent' in gallerySettings || 'backgroundMediaLocalization' in gallerySettings) {
         gallerySettings.importMediaAction = gallerySettings.notifyAdditionalContent === false ? 'none' : 'background';
         delete gallerySettings.notifyAdditionalContent;
         delete gallerySettings.backgroundMediaLocalization;
-        saveGallerySettings();
+        changed = true;
     }
+
+    const datacatFollows = Array.isArray(gallerySettings.datacatFollowedCreators)
+        ? gallerySettings.datacatFollowedCreators
+        : [];
+    const saucepanFollows = Array.isArray(gallerySettings.saucepanFollowedCreators)
+        ? [...gallerySettings.saucepanFollowedCreators]
+        : [];
+    const normalizedName = creator => String(creator?.name || creator?.handle || '').trim().toLowerCase();
+    const isDuplicateSaucepanFollow = creator => saucepanFollows.some(existing => {
+        const creatorId = String(creator?.id || '').trim();
+        const existingId = String(existing?.id || '').trim();
+        const creatorName = normalizedName(creator);
+        const existingName = normalizedName(existing);
+        return (creatorId && existingId && creatorId === existingId)
+            || (creatorName && existingName && creatorName === existingName);
+    });
+    const retainedDatacatFollows = [];
+    let migratedFollows = false;
+    for (const creator of datacatFollows) {
+        if (creator?.source !== 'saucepan') {
+            retainedDatacatFollows.push(creator);
+            continue;
+        }
+        if (!isDuplicateSaucepanFollow(creator)) saucepanFollows.push(creator);
+        migratedFollows = true;
+    }
+    if (migratedFollows) {
+        gallerySettings.datacatFollowedCreators = retainedDatacatFollows;
+        gallerySettings.saucepanFollowedCreators = saucepanFollows;
+        changed = true;
+    }
+
+    if (Array.isArray(gallerySettings.providerOrder) && gallerySettings.providerOrder.includes('datacat') && !gallerySettings.providerOrder.includes('saucepan')) {
+        const datacatIndex = gallerySettings.providerOrder.indexOf('datacat');
+        gallerySettings.providerOrder.splice(datacatIndex + 1, 0, 'saucepan');
+        changed = true;
+    }
+
+    const providerDefaults = { ...(gallerySettings.providerDefaults || {}) };
+    const datacatDefaults = providerDefaults.datacat && typeof providerDefaults.datacat === 'object'
+        ? { ...providerDefaults.datacat }
+        : {};
+    const hadSaucepanDefaults = providerDefaults.saucepan && typeof providerDefaults.saucepan === 'object';
+    const saucepanDefaults = hadSaucepanDefaults ? { ...providerDefaults.saucepan } : {};
+    if (!hadSaucepanDefaults) {
+        if ('hideOwned' in datacatDefaults) saucepanDefaults.hideOwned = datacatDefaults.hideOwned;
+        if ('hidePossible' in datacatDefaults) saucepanDefaults.hidePossible = datacatDefaults.hidePossible;
+    }
+    const saucepanSort = /^saucepan_(new|trending|popular)$/.exec(datacatDefaults.sort || '');
+    if (saucepanSort) {
+        if (!('sort' in saucepanDefaults)) saucepanDefaults.sort = saucepanSort[1];
+        delete datacatDefaults.sort;
+        if (Object.keys(datacatDefaults).length > 0) providerDefaults.datacat = datacatDefaults;
+        else delete providerDefaults.datacat;
+    }
+    if (!hadSaucepanDefaults || saucepanSort) {
+        providerDefaults.saucepan = saucepanDefaults;
+        gallerySettings.providerDefaults = providerDefaults;
+        changed = true;
+    }
+
+    const infiniteScroll = { ...(gallerySettings.infiniteScroll || {}) };
+    if (!Object.hasOwn(infiniteScroll, 'saucepan')) {
+        infiniteScroll.saucepan = true;
+        gallerySettings.infiniteScroll = infiniteScroll;
+        changed = true;
+    }
+
+    const providerExcludeTags = { ...(gallerySettings.providerExcludeTags || {}) };
+    if (!Object.hasOwn(providerExcludeTags, 'saucepan')) {
+        providerExcludeTags.saucepan = Array.isArray(providerExcludeTags.datacat)
+            ? [...providerExcludeTags.datacat]
+            : [];
+        gallerySettings.providerExcludeTags = providerExcludeTags;
+        changed = true;
+    }
+
+    if (changed) saveGallerySettings();
 }
 
 /**
@@ -1922,6 +2082,23 @@ function setupSettingsModal() {
     const ctPluginBanner = document.getElementById('ctPluginBanner');
     const ctSettingsFields = document.getElementById('ctSettingsFields');
     const ctAutoKeepAliveCheckbox = document.getElementById('settingsCtAutoKeepAlive');
+    const charavaultAppPasswordInput = document.getElementById('settingsCharavaultAppPassword');
+    const toggleCharavaultAppPasswordVisibility = document.getElementById('toggleCharavaultAppPasswordVisibility');
+    const charavaultGatewayUrlInput = document.getElementById('settingsCharavaultGatewayUrl');
+    const charavaultGatewayKeyInput = document.getElementById('settingsCharavaultGatewayKey');
+    const toggleCharavaultGatewayKeyVisibility = document.getElementById('toggleCharavaultGatewayKeyVisibility');
+    const chubGatewayBaseUrlInput = document.getElementById('settingsChubGatewayBaseUrl');
+    const chubGatewayApiUrlInput = document.getElementById('settingsChubGatewayApiUrl');
+    const chubGatewayGatewayUrlInput = document.getElementById('settingsChubGatewayGatewayUrl');
+    const chubGatewayAvatarUrlInput = document.getElementById('settingsChubGatewayAvatarUrl');
+    const chubGatewayKeyInput = document.getElementById('settingsChubGatewayKey');
+    const toggleChubGatewayKeyVisibility = document.getElementById('toggleChubGatewayKeyVisibility');
+    const chartavernGatewayBaseUrlInput = document.getElementById('settingsChartavernGatewayBaseUrl');
+    const chartavernGatewayApiUrlInput = document.getElementById('settingsChartavernGatewayApiUrl');
+    const chartavernGatewaySiteUrlInput = document.getElementById('settingsChartavernGatewaySiteUrl');
+    const chartavernGatewayCdnUrlInput = document.getElementById('settingsChartavernGatewayCdnUrl');
+    const chartavernGatewayKeyInput = document.getElementById('settingsChartavernGatewayKey');
+    const toggleChartavernGatewayKeyVisibility = document.getElementById('toggleChartavernGatewayKeyVisibility');
     const wyvernEmailInput = document.getElementById('settingsWyvernEmail');
     const wyvernPasswordInput = document.getElementById('settingsWyvernPassword');
     const wyvernRememberCredsCheckbox = document.getElementById('settingsWyvernRememberCredentials');
@@ -1986,6 +2163,7 @@ function setupSettingsModal() {
     const allowRichTaglineCheckbox = document.getElementById('settingsAllowRichTagline');
     const browseSnapSectionsCheckbox = document.getElementById('settingsBrowseSnapSections');
     const collapseAllBrowseSectionsCheckbox = document.getElementById('settingsCollapseAllBrowseSections');
+    const alwaysEditCheckbox = document.getElementById('settingsAlwaysEdit');
     const mobileProviderQuickSwitchCheckbox = document.getElementById('settingsMobileProviderQuickSwitch');
     const mobileHideBackArrowsCheckbox = document.getElementById('settingsMobileHideBackArrows');
     const mobileBrowseQuickImportCheckbox = document.getElementById('settingsMobileBrowseQuickImport');
@@ -2173,10 +2351,6 @@ function setupSettingsModal() {
             const isDisabled = disabledProviders.has(provider.id);
             if (isDisabled) item.classList.add('provider-disabled');
 
-            const hideToggles = `
-                <label class="provider-default-hide" title="Hide cards already in your library by default"><input type="checkbox" class="provider-default-hide-owned"${defaults.hideOwned ? ' checked' : ''}>Hide Owned</label>
-                <label class="provider-default-hide" title="Hide possible-match cards by default"><input type="checkbox" class="provider-default-hide-possible"${defaults.hidePossible ? ' checked' : ''}>Hide Possible</label>`;
-
             item.innerHTML = `
                 <i class="fa-solid fa-grip-vertical drag-handle"></i>
                 <button type="button" class="provider-toggle-btn${isDisabled ? ' disabled' : ''}" data-provider="${provider.id}" title="${isDisabled ? 'Enable' : 'Disable'} in Online tab">
@@ -2187,7 +2361,7 @@ function setupSettingsModal() {
                 ${providerStatusBadgeHtml(provider)}
                 <span class="provider-order-badge">Default</span>
                 <div class="provider-order-defaults">
-                    ${viewSelect}${sortSelect}${hideToggles}
+                    ${viewSelect}${sortSelect}
                 </div>
             `;
 
@@ -2292,6 +2466,30 @@ function setupSettingsModal() {
         });
     }
 
+    function buildProviderHideDefaultsUI() {
+        const container = document.getElementById('providerHideDefaultsList');
+        if (!container) return;
+
+        const registry = window.ProviderRegistry;
+        if (!registry) return;
+        const viewProviders = registry.getAllProviders().filter(p => p.hasView);
+        const savedDefaults = getSetting('providerDefaults') || {};
+
+        container.innerHTML = '';
+        for (const provider of viewProviders) {
+            const defaults = savedDefaults[provider.id] || {};
+            const row = document.createElement('div');
+            row.className = 'provider-hide-defaults-row';
+            row.dataset.providerId = provider.id;
+            row.innerHTML = `
+                <i class="fa-solid ${provider.icon || 'fa-globe'} provider-order-icon"></i>
+                <span class="provider-order-name">${provider.name}</span>
+                <label class="provider-default-hide" title="Hide cards already in your library by default"><input type="checkbox" class="provider-default-hide-owned"${defaults.hideOwned ? ' checked' : ''}>Hide Owned</label>
+                <label class="provider-default-hide" title="Hide possible-match cards by default"><input type="checkbox" class="provider-default-hide-possible"${defaults.hidePossible ? ' checked' : ''}>Hide Possible</label>`;
+            container.appendChild(row);
+        }
+    }
+
     function readProviderOrderFromUI() {
         const container = document.getElementById('providerOrderList');
         if (!container) return { providerOrder: null, providerDefaults: {}, disabledProviders: [] };
@@ -2315,17 +2513,30 @@ function setupSettingsModal() {
             const sortSel = item.querySelector('.provider-default-sort');
             const viewVal = viewSel?.value || '';
             const sortVal = sortSel?.value || '';
-            const hideOwned = !!item.querySelector('.provider-default-hide-owned')?.checked;
-            const hidePossible = !!item.querySelector('.provider-default-hide-possible')?.checked;
+            const hideOwned = false;
+            const hidePossible = false;
 
-            if (viewVal || sortVal || hideOwned || hidePossible) {
+            if (viewVal || sortVal) {
                 defaults[pid] = {};
                 if (viewVal) defaults[pid].view = viewVal;
                 if (sortVal) defaults[pid].sort = sortVal;
-                if (hideOwned) defaults[pid].hideOwned = true;
-                if (hidePossible) defaults[pid].hidePossible = true;
             }
         });
+
+        const hideDefaultsList = document.getElementById('providerHideDefaultsList');
+        if (hideDefaultsList) {
+            hideDefaultsList.querySelectorAll('.provider-hide-defaults-row').forEach(row => {
+                const pid = row.dataset.providerId;
+                if (!pid) return;
+                const hideOwned = !!row.querySelector('.provider-default-hide-owned')?.checked;
+                const hidePossible = !!row.querySelector('.provider-default-hide-possible')?.checked;
+                if (hideOwned || hidePossible) {
+                    if (!defaults[pid]) defaults[pid] = {};
+                    if (hideOwned) defaults[pid].hideOwned = true;
+                    if (hidePossible) defaults[pid].hidePossible = true;
+                }
+            });
+        }
 
         return { providerOrder: order.length > 0 ? order : null, providerDefaults: defaults, disabledProviders: disabled };
     }
@@ -2380,8 +2591,6 @@ function setupSettingsModal() {
                 <span class="provider-order-badge">Default</span>
                 <div class="provider-order-defaults">
                     ${viewSelect}${sortSelect}
-                    <label class="provider-default-hide" title="Hide cards already in your library by default"><input type="checkbox" class="provider-default-hide-owned">Hide Owned</label>
-                    <label class="provider-default-hide" title="Hide possible-match cards by default"><input type="checkbox" class="provider-default-hide-possible">Hide Possible</label>
                 </div>
             `;
             container.appendChild(item);
@@ -2460,6 +2669,7 @@ function setupSettingsModal() {
         { id: 'saucepan', inputId: 'saucepanExcludeTagsInput', pillsId: 'saucepanExcludeTagsPills' },
         { id: 'botbooru', inputId: 'botbooruExcludeTagsInput', pillsId: 'botbooruExcludeTagsPills' },
         { id: 'janitorai', inputId: 'janitoraiExcludeTagsInput', pillsId: 'janitoraiExcludeTagsPills' },
+        { id: 'charavault', inputId: 'charavaultExcludeTagsInput', pillsId: 'charavaultExcludeTagsPills' },
     ];
 
     function renderExcludeTagPills(providerId, pillsId) {
@@ -2525,11 +2735,31 @@ function setupSettingsModal() {
         if (ctCookieInput) ctCookieInput.value = getSetting('ctCookie') || '';
         if (ctAutoKeepAliveCheckbox) ctAutoKeepAliveCheckbox.checked = getSetting('ctAutoKeepAlive') !== false;
         renderCtSessionTimer();
+        if (charavaultAppPasswordInput) charavaultAppPasswordInput.value = getSetting('charavaultAppPassword') || '';
+        if (charavaultGatewayUrlInput) charavaultGatewayUrlInput.value = getSetting('charavaultGatewayUrl') || '';
+        if (charavaultGatewayKeyInput) charavaultGatewayKeyInput.value = getSetting('charavaultGatewayKey') || '';
+        if (chubGatewayBaseUrlInput) chubGatewayBaseUrlInput.value = getSetting('chubGatewayBaseUrl') || '';
+        if (chubGatewayApiUrlInput) chubGatewayApiUrlInput.value = getSetting('chubGatewayApiUrl') || '';
+        if (chubGatewayGatewayUrlInput) chubGatewayGatewayUrlInput.value = getSetting('chubGatewayGatewayUrl') || '';
+        if (chubGatewayAvatarUrlInput) chubGatewayAvatarUrlInput.value = getSetting('chubGatewayAvatarUrl') || '';
+        if (chubGatewayKeyInput) chubGatewayKeyInput.value = getSetting('chubGatewayKey') || '';
+        if (chartavernGatewayBaseUrlInput) chartavernGatewayBaseUrlInput.value = getSetting('chartavernGatewayBaseUrl') || '';
+        if (chartavernGatewayApiUrlInput) chartavernGatewayApiUrlInput.value = getSetting('chartavernGatewayApiUrl') || '';
+        if (chartavernGatewaySiteUrlInput) chartavernGatewaySiteUrlInput.value = getSetting('chartavernGatewaySiteUrl') || '';
+        if (chartavernGatewayCdnUrlInput) chartavernGatewayCdnUrlInput.value = getSetting('chartavernGatewayCdnUrl') || '';
+        if (chartavernGatewayKeyInput) chartavernGatewayKeyInput.value = getSetting('chartavernGatewayKey') || '';
         if (wyvernEmailInput) wyvernEmailInput.value = getSetting('wyvernEmail') || '';
         if (wyvernPasswordInput) wyvernPasswordInput.value = getSetting('wyvernPassword') || '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = getSetting('wyvernRememberCredentials') || false;
         if (datacatTokenInput) datacatTokenInput.value = getSetting('datacatToken') || '';
         if (saucepanTokenInput) saucepanTokenInput.value = getSetting('saucepanToken') || '';
+        // Show login state on modal open
+        const sts = document.getElementById('saucepanTokenStatus');
+        if (sts) {
+            const hasToken = !!getSetting('saucepanToken');
+            sts.className = hasToken ? 'settings-status-badge active' : 'settings-status-badge inactive';
+            sts.innerHTML = hasToken ? '<i class="fa-solid fa-circle"></i> Logged in' : '<i class="fa-solid fa-circle"></i> Not logged in';
+        }
         // Not just field repopulation: this also re-reads the managed browser's live state, which
         // can have started or idle-stopped since the panel was last built.
         refreshJanitoraiSettingsUi();
@@ -2942,6 +3172,83 @@ function setupSettingsModal() {
             });
         }
 
+        // FlareSolverr endpoint for Hampter sort orders
+        const datacatFlareSolverrInput = document.getElementById('settingsDatacatFlareSolverrUrl');
+        const datacatFlareSolverrStatus = document.getElementById('datacatFlareSolverrStatus');
+        const testDatacatFlareSolverrBtn = document.getElementById('testDatacatFlareSolverrBtn');
+
+        const updateFlareSolverrStatusBadge = () => {
+            if (!datacatFlareSolverrStatus) return;
+            const url = (getSetting('datacatFlareSolverrUrl') || '').trim();
+            if (!url) {
+                datacatFlareSolverrStatus.className = 'settings-status-badge inactive';
+                datacatFlareSolverrStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Not configured';
+            } else {
+                datacatFlareSolverrStatus.className = 'settings-status-badge active';
+                datacatFlareSolverrStatus.innerHTML = '<i class="fa-solid fa-circle"></i> Configured (untested)';
+            }
+        };
+
+        if (datacatFlareSolverrInput) {
+            datacatFlareSolverrInput.value = getSetting('datacatFlareSolverrUrl') || '';
+            datacatFlareSolverrInput.addEventListener('change', () => {
+                setSetting('datacatFlareSolverrUrl', datacatFlareSolverrInput.value.trim());
+                updateFlareSolverrStatusBadge();
+            });
+            datacatFlareSolverrInput.addEventListener('blur', () => {
+                setSetting('datacatFlareSolverrUrl', datacatFlareSolverrInput.value.trim());
+                updateFlareSolverrStatusBadge();
+            });
+        }
+        updateFlareSolverrStatusBadge();
+
+        if (testDatacatFlareSolverrBtn) {
+            testDatacatFlareSolverrBtn.addEventListener('click', async () => {
+                const url = (datacatFlareSolverrInput?.value || '').trim();
+                if (!url) {
+                    showToast('Enter a FlareSolverr URL first', 'warning');
+                    return;
+                }
+                setSetting('datacatFlareSolverrUrl', url);
+                if (datacatFlareSolverrStatus) {
+                    datacatFlareSolverrStatus.className = 'settings-status-badge inactive';
+                    datacatFlareSolverrStatus.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Testing...';
+                }
+                testDatacatFlareSolverrBtn.disabled = true;
+                try {
+                    const resp = await apiRequest(`/plugins/cl-helper/flaresolverr-fetch`, 'POST', {
+                        flareUrl: url,
+                        targetUrl: 'https://janitorai.com/hampter/characters?sort=trending&page=1',
+                    });
+                    const payload = await resp.json().catch(() => null);
+                    if (!resp.ok || !payload) {
+                        const msg = payload?.error || `HTTP ${resp.status}`;
+                        throw new Error(msg);
+                    }
+                    if (payload.status !== 'ok') {
+                        throw new Error(payload.message || 'FlareSolverr did not return ok');
+                    }
+                    const upstreamStatus = payload.solution?.status;
+                    if (typeof upstreamStatus === 'number' && upstreamStatus >= 400) {
+                        throw new Error(`Upstream HTTP ${upstreamStatus} (challenge not bypassed)`);
+                    }
+                    if (datacatFlareSolverrStatus) {
+                        datacatFlareSolverrStatus.className = 'settings-status-badge active';
+                        datacatFlareSolverrStatus.innerHTML = '<i class="fa-solid fa-circle-check"></i> Connected';
+                    }
+                    showToast('FlareSolverr connection successful', 'success');
+                } catch (err) {
+                    if (datacatFlareSolverrStatus) {
+                        datacatFlareSolverrStatus.className = 'settings-status-badge inactive';
+                        datacatFlareSolverrStatus.innerHTML = `<i class="fa-solid fa-circle-xmark"></i> Failed`;
+                    }
+                    showToast(`FlareSolverr test failed: ${err.message}`, 'error');
+                } finally {
+                    testDatacatFlareSolverrBtn.disabled = false;
+                }
+            });
+        }
+
         // Check cl-helper plugin availability for provider + cl-helper-backed feature sections
         const gridThumbsClHelperBanner = document.getElementById('gridThumbsClHelperBanner');
         const settingsGridThumbClHelperFields = document.getElementById('settingsGridThumbClHelperFields');
@@ -3066,6 +3373,9 @@ function setupSettingsModal() {
         if (collapseAllBrowseSectionsCheckbox) {
             collapseAllBrowseSectionsCheckbox.checked = getSetting('collapseAllBrowseSections') === true;
         }
+        if (alwaysEditCheckbox) {
+            alwaysEditCheckbox.checked = getSetting('alwaysEditEnabled') === true;
+        }
         if (mobileProviderQuickSwitchCheckbox) {
             mobileProviderQuickSwitchCheckbox.checked = getSetting('mobileProviderQuickSwitch') !== false;
         }
@@ -3156,6 +3466,7 @@ function setupSettingsModal() {
 
         // Provider Order & Defaults
         buildProviderOrderUI();
+        buildProviderHideDefaultsUI();
         buildInfiniteScrollUI();
         populateAllExcludeTagPills();
         window.renderBotbooruFavTagPills?.();
@@ -3291,6 +3602,35 @@ function setupSettingsModal() {
             const isPassword = datacatTokenInput.type === 'password';
             datacatTokenInput.type = isPassword ? 'text' : 'password';
             toggleDatacatTokenVisibility.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+
+    if (toggleCharavaultAppPasswordVisibility && charavaultAppPasswordInput) {
+        toggleCharavaultAppPasswordVisibility.onclick = () => {
+            const isPassword = charavaultAppPasswordInput.type === 'password';
+            charavaultAppPasswordInput.type = isPassword ? 'text' : 'password';
+            toggleCharavaultAppPasswordVisibility.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+    if (toggleCharavaultGatewayKeyVisibility && charavaultGatewayKeyInput) {
+        toggleCharavaultGatewayKeyVisibility.onclick = () => {
+            const isPassword = charavaultGatewayKeyInput.type === 'password';
+            charavaultGatewayKeyInput.type = isPassword ? 'text' : 'password';
+            toggleCharavaultGatewayKeyVisibility.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+    if (toggleChubGatewayKeyVisibility && chubGatewayKeyInput) {
+        toggleChubGatewayKeyVisibility.onclick = () => {
+            const isPassword = chubGatewayKeyInput.type === 'password';
+            chubGatewayKeyInput.type = isPassword ? 'text' : 'password';
+            toggleChubGatewayKeyVisibility.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
+        };
+    }
+    if (toggleChartavernGatewayKeyVisibility && chartavernGatewayKeyInput) {
+        toggleChartavernGatewayKeyVisibility.onclick = () => {
+            const isPassword = chartavernGatewayKeyInput.type === 'password';
+            chartavernGatewayKeyInput.type = isPassword ? 'text' : 'password';
+            toggleChartavernGatewayKeyVisibility.innerHTML = `<i class="fa-solid fa-eye${isPassword ? '-slash' : ''}"></i>`;
         };
     }
     
@@ -3544,6 +3884,19 @@ function setupSettingsModal() {
             botbooruPassword: botbooruPasswordInput ? (botbooruPasswordInput.value || null) : null,
             ctCookie: ctCookieInput ? (ctCookieInput.value?.trim() || null) : null,
             ctAutoKeepAlive: ctAutoKeepAliveCheckbox ? ctAutoKeepAliveCheckbox.checked : true,
+            charavaultAppPassword: charavaultAppPasswordInput ? (charavaultAppPasswordInput.value?.trim() || null) : null,
+            charavaultGatewayUrl: charavaultGatewayUrlInput ? (charavaultGatewayUrlInput.value?.trim() || null) : null,
+            charavaultGatewayKey: charavaultGatewayKeyInput ? (charavaultGatewayKeyInput.value?.trim() || null) : null,
+            chubGatewayBaseUrl: chubGatewayBaseUrlInput ? (chubGatewayBaseUrlInput.value?.trim() || null) : null,
+            chubGatewayApiUrl: chubGatewayApiUrlInput ? (chubGatewayApiUrlInput.value?.trim() || null) : null,
+            chubGatewayGatewayUrl: chubGatewayGatewayUrlInput ? (chubGatewayGatewayUrlInput.value?.trim() || null) : null,
+            chubGatewayAvatarUrl: chubGatewayAvatarUrlInput ? (chubGatewayAvatarUrlInput.value?.trim() || null) : null,
+            chubGatewayKey: chubGatewayKeyInput ? (chubGatewayKeyInput.value?.trim() || null) : null,
+            chartavernGatewayBaseUrl: chartavernGatewayBaseUrlInput ? (chartavernGatewayBaseUrlInput.value?.trim() || null) : null,
+            chartavernGatewayApiUrl: chartavernGatewayApiUrlInput ? (chartavernGatewayApiUrlInput.value?.trim() || null) : null,
+            chartavernGatewaySiteUrl: chartavernGatewaySiteUrlInput ? (chartavernGatewaySiteUrlInput.value?.trim() || null) : null,
+            chartavernGatewayCdnUrl: chartavernGatewayCdnUrlInput ? (chartavernGatewayCdnUrlInput.value?.trim() || null) : null,
+            chartavernGatewayKey: chartavernGatewayKeyInput ? (chartavernGatewayKeyInput.value?.trim() || null) : null,
             wyvernEmail: wyvernEmailInput ? (wyvernEmailInput.value || null) : null,
             wyvernPassword: wyvernPasswordInput ? (wyvernPasswordInput.value || null) : null,
             wyvernRememberCredentials: wyvernRememberCredsCheckbox ? wyvernRememberCredsCheckbox.checked : false,
@@ -3584,6 +3937,7 @@ function setupSettingsModal() {
             allowRichTagline: allowRichTaglineCheckbox ? allowRichTaglineCheckbox.checked : false,
             browseSnapSections: browseSnapSectionsCheckbox ? browseSnapSectionsCheckbox.checked : false,
             collapseAllBrowseSections: collapseAllBrowseSectionsCheckbox ? collapseAllBrowseSectionsCheckbox.checked : false,
+            alwaysEditEnabled: alwaysEditCheckbox ? alwaysEditCheckbox.checked : false,
             mobileProviderQuickSwitch: mobileProviderQuickSwitchCheckbox ? mobileProviderQuickSwitchCheckbox.checked : true,
             mobileHideBackArrows: mobileHideBackArrowsCheckbox ? mobileHideBackArrowsCheckbox.checked : false,
             mobileBrowseQuickImport: mobileBrowseQuickImportCheckbox ? mobileBrowseQuickImportCheckbox.checked : true,
@@ -3721,6 +4075,19 @@ function setupSettingsModal() {
         if (pygmalionPasswordInput) pygmalionPasswordInput.value = '';
         if (pygmalionRememberCredsCheckbox) pygmalionRememberCredsCheckbox.checked = false;
         if (ctCookieInput) ctCookieInput.value = '';
+        if (charavaultAppPasswordInput) charavaultAppPasswordInput.value = '';
+        if (charavaultGatewayUrlInput) charavaultGatewayUrlInput.value = '';
+        if (charavaultGatewayKeyInput) charavaultGatewayKeyInput.value = '';
+        if (chubGatewayBaseUrlInput) chubGatewayBaseUrlInput.value = '';
+        if (chubGatewayApiUrlInput) chubGatewayApiUrlInput.value = '';
+        if (chubGatewayGatewayUrlInput) chubGatewayGatewayUrlInput.value = '';
+        if (chubGatewayAvatarUrlInput) chubGatewayAvatarUrlInput.value = '';
+        if (chubGatewayKeyInput) chubGatewayKeyInput.value = '';
+        if (chartavernGatewayBaseUrlInput) chartavernGatewayBaseUrlInput.value = '';
+        if (chartavernGatewayApiUrlInput) chartavernGatewayApiUrlInput.value = '';
+        if (chartavernGatewaySiteUrlInput) chartavernGatewaySiteUrlInput.value = '';
+        if (chartavernGatewayCdnUrlInput) chartavernGatewayCdnUrlInput.value = '';
+        if (chartavernGatewayKeyInput) chartavernGatewayKeyInput.value = '';
         if (wyvernEmailInput) wyvernEmailInput.value = '';
         if (wyvernPasswordInput) wyvernPasswordInput.value = '';
         if (wyvernRememberCredsCheckbox) wyvernRememberCredsCheckbox.checked = false;
@@ -3781,6 +4148,9 @@ function setupSettingsModal() {
         if (collapseAllBrowseSectionsCheckbox) {
             collapseAllBrowseSectionsCheckbox.checked = DEFAULT_SETTINGS.collapseAllBrowseSections;
         }
+        if (alwaysEditCheckbox) {
+            alwaysEditCheckbox.checked = DEFAULT_SETTINGS.alwaysEditEnabled;
+        }
         if (mobileProviderQuickSwitchCheckbox) {
             mobileProviderQuickSwitchCheckbox.checked = DEFAULT_SETTINGS.mobileProviderQuickSwitch;
         }
@@ -3812,6 +4182,9 @@ function setupSettingsModal() {
 
         // Provider Order & Defaults - reset to registration order
         resetProviderOrderUI();
+
+        // Provider Hide Defaults - rebuild
+        buildProviderHideDefaultsUI();
 
         // Infinite Scroll - reset all to enabled
         const isContainer = document.getElementById('infiniteScrollToggles');
@@ -3857,6 +4230,19 @@ function setupSettingsModal() {
             botbooruPassword: getSetting('botbooruPassword') || null,
             civitaiApiKey: getSetting('civitaiApiKey') || null,
             pixivCookie: getSetting('pixivCookie') || null,
+            charavaultAppPassword: getSetting('charavaultAppPassword') || null,
+            charavaultGatewayUrl: getSetting('charavaultGatewayUrl') || null,
+            charavaultGatewayKey: getSetting('charavaultGatewayKey') || null,
+            chubGatewayBaseUrl: getSetting('chubGatewayBaseUrl') || null,
+            chubGatewayApiUrl: getSetting('chubGatewayApiUrl') || null,
+            chubGatewayGatewayUrl: getSetting('chubGatewayGatewayUrl') || null,
+            chubGatewayAvatarUrl: getSetting('chubGatewayAvatarUrl') || null,
+            chubGatewayKey: getSetting('chubGatewayKey') || null,
+            chartavernGatewayBaseUrl: getSetting('chartavernGatewayBaseUrl') || null,
+            chartavernGatewayApiUrl: getSetting('chartavernGatewayApiUrl') || null,
+            chartavernGatewaySiteUrl: getSetting('chartavernGatewaySiteUrl') || null,
+            chartavernGatewayCdnUrl: getSetting('chartavernGatewayCdnUrl') || null,
+            chartavernGatewayKey: getSetting('chartavernGatewayKey') || null,
         });
         
         const searchName = document.getElementById('searchName');
@@ -4208,6 +4594,13 @@ function setupSettingsModal() {
         };
     }
 
+    const saucepanTokenStatus = document.getElementById('saucepanTokenStatus');
+    const updateTokenStatusUI = (loggedIn) => {
+        if (!saucepanTokenStatus) return;
+        saucepanTokenStatus.className = `settings-status-badge ${loggedIn ? 'active' : 'inactive'}`;
+        saucepanTokenStatus.innerHTML = `<i class="fa-solid fa-circle"></i> ${loggedIn ? 'Logged in' : 'Not logged in'}`;
+    };
+
     const toggleSaucepanPasswordVisibility = document.getElementById('toggleSaucepanPasswordVisibility');
     if (toggleSaucepanPasswordVisibility && saucepanPasswordInput) {
         toggleSaucepanPasswordVisibility.onclick = () => {
@@ -4239,6 +4632,7 @@ function setupSettingsModal() {
                 if (result?.ok && result.token) {
                     if (saucepanTokenInput) saucepanTokenInput.value = result.token;
                     if (saucepanPasswordInput) saucepanPasswordInput.value = '';
+                    updateTokenStatusUI(true);
                     showToast('Saucepan login successful!', 'success');
                 } else {
                     showToast(`Saucepan login failed: ${result?.error || 'unknown error'}`, 'error');
@@ -4270,6 +4664,7 @@ function setupSettingsModal() {
             try {
                 const result = await window.saucepanSetToken(pasted);
                 if (result?.ok) {
+                    updateTokenStatusUI(true);
                     showToast('Saucepan token saved', 'success');
                 } else {
                     showToast(result?.error || 'Failed to save token', 'warning');
@@ -4300,10 +4695,12 @@ function setupSettingsModal() {
                 if (result?.valid) {
                     validateSaucepanBtn.classList.add('success');
                     validateSaucepanBtn.innerHTML = '<i class="fa-solid fa-check"></i>';
+                    updateTokenStatusUI(true);
                     showToast('Saucepan token is valid!', 'success');
                 } else {
                     validateSaucepanBtn.classList.add('error');
                     validateSaucepanBtn.innerHTML = '<i class="fa-solid fa-times"></i>';
+                    updateTokenStatusUI(false);
                     showToast(`Saucepan token invalid: ${result?.reason || 'unknown'}`, 'error');
                 }
             } catch (err) {
@@ -4327,6 +4724,7 @@ function setupSettingsModal() {
                 if (window.saucepanClearSession) await window.saucepanClearSession();
                 else setSetting('saucepanToken', null);
                 if (saucepanTokenInput) saucepanTokenInput.value = '';
+                updateTokenStatusUI(false);
                 showToast('Saucepan token cleared', 'info');
             } catch (err) {
                 showToast(`Clear error: ${err.message}`, 'error');
@@ -5517,7 +5915,72 @@ function setupSettingsModal() {
             debugLog('[MigrateAll] Summary:', { totalMoved, totalErrors, charsProcessed, charsWithImages });
         };
     }
-    
+
+    // Fix Chat Links button handler
+    const fixChatMediaLinksBtn = document.getElementById('fixChatMediaLinksBtn');
+    const fixChatMediaLinksStatus = document.getElementById('fixChatMediaLinksStatus');
+    const fixChatMediaLinksStatusText = document.getElementById('fixChatMediaLinksStatusText');
+
+    if (fixChatMediaLinksBtn) {
+        fixChatMediaLinksBtn.onclick = async () => {
+            if (!getSetting('uniqueGalleryFolders')) {
+                showToast('Enable "Unique Gallery Folders" first before fixing chat links.', 'error');
+                return;
+            }
+            if (window.extensionsRecoveryInProgress) {
+                showToast('Character data is still loading — please wait', 'warning');
+                return;
+            }
+
+            const confirmed = confirm(
+                `Fix Chat Links\n\n` +
+                `This scans every chat for every character with a gallery ID, looking for messages (from either ` +
+                `side of the conversation) whose attached image no longer exists in its recorded folder but does ` +
+                `exist in that character's current gallery folder, and repoints the link.\n\n` +
+                `A link is only rewritten when the old path is confirmed missing and the new one confirmed present, ` +
+                `so images that were never moved are left alone.\n\n` +
+                `This can take a while on large chat histories. Continue?`
+            );
+            if (!confirmed) return;
+
+            const originalText = fixChatMediaLinksBtn.innerHTML;
+            fixChatMediaLinksBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Scanning...';
+            fixChatMediaLinksBtn.disabled = true;
+            if (fixChatMediaLinksStatus) fixChatMediaLinksStatus.style.display = 'block';
+
+            let result;
+            try {
+                result = await fixChatMediaLinksForUniqueFolders({
+                    onProgress: ({ character, chat, charIndex, charTotal }) => {
+                        if (fixChatMediaLinksStatusText) {
+                            fixChatMediaLinksStatusText.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Scanning ${escapeHtml(character)} (${charIndex}/${charTotal})... "${escapeHtml(chat)}"`;
+                        }
+                    },
+                });
+            } catch (error) {
+                console.error('[FixChatLinks] Unexpected error:', error);
+                result = { charactersScanned: 0, chatsScanned: 0, chatsFixed: 0, linksFixed: 0, errors: [{ character: '-', error: error.message }] };
+            }
+
+            fixChatMediaLinksBtn.innerHTML = originalText;
+            fixChatMediaLinksBtn.disabled = false;
+
+            const { chatsScanned, chatsFixed, linksFixed, errors } = result;
+            if (fixChatMediaLinksStatusText) {
+                fixChatMediaLinksStatusText.innerHTML = `<i class="fa-solid fa-check"></i> Scanned ${chatsScanned} chat(s): ${linksFixed} link(s) fixed in ${chatsFixed} chat(s).${errors.length > 0 ? ` ${errors.length} error(s), check console.` : ''}`;
+            }
+            if (errors.length > 0) {
+                console.warn('[FixChatLinks] Errors:', errors);
+            }
+
+            const message = `Fixed ${linksFixed} chat link(s) across ${chatsFixed} chat(s)` +
+                (errors.length > 0 ? ` (${errors.length} errors)` : '');
+            showToast(message, errors.length === 0 ? 'success' : 'error');
+
+            debugLog('[FixChatLinks] Summary:', result);
+        };
+    }
+
     // View Folder Mapping button handler
     const viewFolderMappingBtn = document.getElementById('viewFolderMappingBtn');
     if (viewFolderMappingBtn) {
@@ -5754,8 +6217,9 @@ function activateOnlineProvider(requestedId) {
     }
 
     lastOnlineProviderId = targetId;
-    registry.activateProvider(targetId, container, filterContent);
+    return registry.activateProvider(targetId, container, filterContent);
 }
+window.activateOnlineProvider = activateOnlineProvider;
 
 /**
  * Switch between top-level views (characters, chats, online).
@@ -8089,19 +8553,35 @@ async function relocateSharedFolderImages(characters, options = {}) {
         
         if (onProgress) onProgress(i + 1, imagesToMove.length);
     }
-    
+
     if (onLogUpdate && logEntry) {
         const status = results.errors === 0 ? 'success' : 'warning';
-        onLogUpdate(logEntry, 
-            `${sharedFolderName}: ${results.moved} moved, ${results.unmatched} unmatched, ${results.errors} errors`, 
+        onLogUpdate(logEntry,
+            `${sharedFolderName}: ${results.moved} moved, ${results.unmatched} unmatched, ${results.errors} errors`,
             status
         );
     }
-    
+
     if (unmatchedImages.length > 0) {
         debugLog(`[Migration] Unmatched images in ${sharedFolderName}:`, unmatchedImages);
     }
-    
+
+    // Smart Relocate has the same orphaned-chat-link issue as unique-folder migration - fix
+    // embedded media links once per character that actually had files moved out of the shared folder.
+    const relocatedChars = new Map(); // avatar -> targetChar
+    for (const { targetChar } of imagesToMove) {
+        if (!relocatedChars.has(targetChar.avatar)) relocatedChars.set(targetChar.avatar, targetChar);
+    }
+    for (const targetChar of relocatedChars.values()) {
+        const uniqueFolder = buildUniqueGalleryFolderName(targetChar);
+        if (!uniqueFolder || uniqueFolder === sharedFolderName) continue;
+        try {
+            await rewriteEmbeddedMediaLinksInChats(targetChar, sharedFolderName, uniqueFolder);
+        } catch (error) {
+            debugError(`[Migration] Error fixing embedded chat media links for ${targetChar.name}:`, error);
+        }
+    }
+
     return results;
 }
 
@@ -8197,13 +8677,207 @@ async function migrateCharacterImagesToUniqueFolder(char) {
         }
         
         debugLog(`[MigrateAll] ${char.name}: Moved ${result.moved} files, ${result.errors} errors`);
-        
+
+        if (result.moved > 0) {
+            try {
+                result.chatLinksFixed = await rewriteEmbeddedMediaLinksInChats(char, oldFolderName, uniqueFolderName);
+            } catch (error) {
+                debugError(`[MigrateAll] Error fixing embedded chat media links for ${char.name}:`, error);
+            }
+        }
+
     } catch (error) {
         debugError(`[MigrateAll] Error migrating ${char.name}:`, error);
         result.errors++;
     }
-    
+
     return result;
+}
+
+// Chat repair uses one guarded writer for both explicit recovery and migration hooks.
+function isRepairChatActive(char, fileName) {
+    const ctx = getSTContext();
+    if (!ctx) throw new Error('Open Character Library from SillyTavern before repairing chats');
+    if (ctx.groupId) return false;
+    const active = ctx.characters?.[ctx.characterId];
+    const activeChat = ctx.chatId || ctx.getCurrentChatId?.();
+    return active?.avatar === char.avatar && String(activeChat || '').replace(/\.jsonl$/i, '') === fileName;
+}
+
+async function saveRepairedChat(char, fileName, messages, original) {
+    if (isRepairChatActive(char, fileName)) throw new Error('Chat is open; switch away before repairing it');
+    const response = await apiRequest(ENDPOINTS.CHATS_GET, 'POST', {
+        ch_name: char.name, file_name: fileName, avatar_url: char.avatar,
+    });
+    if (!response.ok) throw new Error('Could not recheck chat before repair');
+    if (JSON.stringify(await response.json()) !== original || isRepairChatActive(char, fileName)) {
+        throw new Error('Chat changed during repair; retry after closing it');
+    }
+    return apiRequest(ENDPOINTS.CHATS_SAVE, 'POST', {
+        ch_name: char.name, file_name: fileName, avatar_url: char.avatar, chat: messages,
+    });
+}
+
+function parseLocalGalleryImageUrl(url) {
+    if (typeof url !== 'string') return null;
+    const match = url.match(/^\/user\/images\/([^/]+)\/([^/?#]+)/);
+    if (!match) return null;
+    try {
+        return { folder: decodeURIComponent(match[1]), fileName: decodeURIComponent(match[2]) };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Repoints chat-attached media (extra.media[], legacy extra.image, and their per-swipe
+ * copies in swipe_info[].extra) that still point at a character's pre-migration gallery
+ * folder after "Unique Gallery Folders" moved the files out from under them.
+ *
+ * Every message in the chat is scanned, regardless of who sent it: SillyTavern's manual
+ * attach-a-file flow (drag/drop, paste, file picker before sending) saves under the
+ * currently active *character's* folder unconditionally, even for messages that end up
+ * flagged is_user — only the separate "model returned an inline image" path keys off the
+ * speaking party, and that path only ever produces character messages. So a stale link can
+ * show up on a user message too. A link is only rewritten when the same filename is
+ * confirmed present in the character's current gallery folder AND confirmed absent from
+ * the referenced folder, so a same-named file that legitimately still lives in both places
+ * is left alone — that dual check, not the message's author, is what keeps this safe.
+ * Single-character chats only; group chats are out of scope (a group message's folder is
+ * whichever member spoke, not a single character's gallery).
+ *
+ * @param {object} [options]
+ * @param {(info: { character: string, chat: string, charIndex: number, charTotal: number }) => void} [options.onProgress]
+ * @returns {Promise<{ charactersScanned: number, chatsScanned: number, chatsFixed: number, linksFixed: number, errors: Array<{ character: string, chat?: string, error: string }> }>}
+ */
+async function fixChatMediaLinksForUniqueFolders(options = {}) {
+    const { onProgress } = options;
+    const result = { charactersScanned: 0, chatsScanned: 0, chatsFixed: 0, linksFixed: 0, errors: [] };
+
+    if (!getSetting('uniqueGalleryFolders')) {
+        return result;
+    }
+
+    // Only characters with a gallery_id could ever have had files migrated out of their
+    // plain-name folder, so only they can have stale links to repair.
+    const candidates = (options.characters || allCharacters).filter(c => extensionsReady(c) && getCharacterGalleryId(c));
+
+    // Folder file-name listings are fetched once per distinct folder per run and reused
+    // across every chat/message that references that folder.
+    const folderFileCache = new Map();
+    function listFolderFiles(folderName) {
+        if (!folderName) return Promise.resolve(new Set());
+        if (folderFileCache.has(folderName)) return folderFileCache.get(folderName);
+        const promise = (async () => {
+            try {
+                const resp = await apiRequest(ENDPOINTS.IMAGES_LIST, 'POST', { folder: folderName, type: 7 });
+                if (!resp.ok) throw new Error('Could not verify gallery folder: ' + folderName);
+                const files = await resp.json();
+                return new Set((files || []).map(f => (typeof f === 'string' ? f : f?.name)).filter(Boolean));
+            } catch (error) { throw error; }
+        })();
+        folderFileCache.set(folderName, promise);
+        return promise;
+    }
+
+    for (let i = 0; i < candidates.length; i++) {
+        const char = candidates[i];
+        result.charactersScanned++;
+        const currentFolder = getGalleryFolderName(char);
+        if (!currentFolder) continue;
+
+        let chats;
+        try {
+            const resp = await apiRequest(ENDPOINTS.CHARACTERS_CHATS, 'POST', { avatar_url: char.avatar });
+            if (!resp.ok) continue;
+            chats = await resp.json();
+        } catch (error) {
+            result.errors.push({ character: char.name, error: error.message });
+            continue;
+        }
+        if (!Array.isArray(chats) || chats.length === 0) continue;
+
+        for (const chatMeta of chats) {
+            const fileName = (chatMeta?.file_name || '').replace(/\.jsonl$/, '');
+            if (!fileName) continue;
+            result.chatsScanned++;
+
+            onProgress?.({ character: char.name, chat: fileName, charIndex: i + 1, charTotal: candidates.length });
+
+            let messages;
+            try {
+                const resp = await apiRequest(ENDPOINTS.CHATS_GET, 'POST', {
+                    ch_name: char.name,
+                    file_name: fileName,
+                    avatar_url: char.avatar,
+                });
+                if (!resp.ok) continue;
+                messages = await resp.json();
+            } catch (error) {
+                result.errors.push({ character: char.name, chat: fileName, error: error.message });
+                continue;
+            }
+            if (!Array.isArray(messages) || messages.length === 0) continue;
+
+            const original = JSON.stringify(messages);
+            if (isRepairChatActive(char, fileName)) continue;
+            let chatLinksFixed = 0;
+
+            const maybeFixField = async (obj, key) => {
+                const parsed = parseLocalGalleryImageUrl(obj?.[key]);
+                if (!parsed || parsed.folder === currentFolder) return;
+
+                const [newFolderFiles, oldFolderFiles] = await Promise.all([
+                    listFolderFiles(currentFolder),
+                    listFolderFiles(parsed.folder),
+                ]);
+
+                if (newFolderFiles.has(parsed.fileName) && !oldFolderFiles.has(parsed.fileName)) {
+                    obj[key] = obj[key].replace(/^\/user\/images\/[^/]+\/[^/?#]+/, `/user/images/${encodeURIComponent(currentFolder)}/${encodeURIComponent(parsed.fileName)}`);
+                    chatLinksFixed++;
+                }
+            };
+
+            // Include attachment fields, swipes, and inline Markdown/HTML media URLs.
+            const walk = async obj => {
+                if (!obj || typeof obj !== 'object') return;
+                for (const key of Object.keys(obj)) {
+                    if (typeof obj[key] === 'string') {
+                        const urls = obj[key].match(/\/user\/images\/[^/\s"'<>]+\/[^\s"'<>()[\]]+/g) || [];
+                        for (const url of new Set(urls)) {
+                            const item = { url };
+                            await maybeFixField(item, 'url');
+                            if (item.url !== url) obj[key] = obj[key].split(url).join(item.url);
+                        }
+                    } else await walk(obj[key]);
+                }
+            };
+            await walk(messages);
+
+            if (chatLinksFixed === 0) continue;
+
+            try {
+                const saveResp = await saveRepairedChat(char, fileName, messages, original);
+                if (saveResp.ok) {
+                    result.chatsFixed++;
+                    result.linksFixed += chatLinksFixed;
+                } else {
+                    const errorText = await saveResp.text().catch(() => 'Unknown error');
+                    result.errors.push({ character: char.name, chat: fileName, error: `Save failed: ${errorText}` });
+                }
+            } catch (error) {
+                result.errors.push({ character: char.name, chat: fileName, error: error.message });
+            }
+        }
+    }
+
+    return result;
+}
+
+async function rewriteEmbeddedMediaLinksInChats(char, oldFolderName, newFolderName) {
+    // One repair implementation owns both migration hooks and the manual recovery action.
+    const repaired = await fixChatMediaLinksForUniqueFolders({ characters: [char] });
+    return { chatsScanned: repaired.chatsScanned, chatsFixed: repaired.chatsFixed, errors: repaired.errors.length };
 }
 
 /**
@@ -8278,16 +8952,21 @@ async function handleGalleryFolderRename(char, oldName, newName, galleryId) {
 
         result.success = result.errors === 0;
         debugLog(`[GalleryRename] Complete: ${result.moved} moved, ${result.errors} errors`);
-        
+
         if (result.moved > 0) {
             showToast(`Gallery folder renamed: ${result.moved} files moved`, 'success');
+            try {
+                await rewriteEmbeddedMediaLinksInChats(char, oldFolderName, newFolderName);
+            } catch (error) {
+                debugError(`[GalleryRename] Error fixing embedded chat media links for ${char.name}:`, error);
+            }
         }
-        
+
     } catch (error) {
         debugError(`[GalleryRename] Error:`, error);
         result.errors++;
     }
-    
+
     return result;
 }
 
@@ -8298,6 +8977,81 @@ async function handleGalleryFolderRename(char, oldName, newName, galleryId) {
 function closeEmbeddedPanel() {
     if (isEmbedded && window.parent !== window) {
         window.parent.postMessage({ source: 'character-library', type: 'cl-close' }, window.location.origin);
+    }
+}
+
+// Top-bar Lorebooks button. The host opens this same page in the embedded panel and asks
+// for the manager directly. lorebooksOnly hides the character grid so closing the manager
+// returns to the chat instead of the library.
+let _pendingLorebooksOpen = null;
+let _lorebooksOpenTimer = null;
+
+function setLorebooksOnlyMode(on) {
+    document.documentElement.classList.toggle('cl-lorebooks-only', !!on);
+}
+
+function notifyLorebooksVisible() {
+    if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ source: 'character-library', type: 'cl-lorebooks-visible' }, window.location.origin);
+    }
+}
+
+function queueLorebooksOpen(lorebooksOnly) {
+    _pendingLorebooksOpen = { lorebooksOnly: !!lorebooksOnly };
+    if (lorebooksOnly) setLorebooksOnlyMode(true);
+    notifyLorebooksVisible();
+    flushLorebooksOpen();
+}
+
+function flushLorebooksOpen() {
+    if (!_pendingLorebooksOpen) return;
+    if (typeof window.openLorebookManager !== 'function') {
+        if (!_lorebooksOpenTimer) _lorebooksOpenTimer = setInterval(flushLorebooksOpen, 50);
+        return;
+    }
+    if (_lorebooksOpenTimer) {
+        clearInterval(_lorebooksOpenTimer);
+        _lorebooksOpenTimer = null;
+    }
+    const job = _pendingLorebooksOpen;
+    _pendingLorebooksOpen = null;
+    setLorebooksOnlyMode(job.lorebooksOnly);
+    window.openLorebookManager();
+    document.documentElement.classList.add('cl-lorebooks-booted');
+}
+
+// Hide the manager and bring the character grid back, without discarding an in-progress edit.
+// The panel is already hidden by the host when this runs, so the next library open shows the grid
+// and the next lorebooks open restores the editor via openModal's keepSelection path.
+function suspendLorebooksToLibrary() {
+    _pendingLorebooksOpen = null;
+    setLorebooksOnlyMode(false);
+    if (document.getElementById('lbOrganizeModal')?.classList.contains('visible')) {
+        document.getElementById('lbOrganizeCancelBtn')?.click();
+    }
+    document.getElementById('lorebookModal')?.classList.add('hidden');
+}
+
+function setupLorebooksHostBridge() {
+    if (window.__clLorebooksHostBridge) return;
+    window.__clLorebooksHostBridge = true;
+    window.addEventListener('message', (e) => {
+        if (e.origin !== window.location.origin) return;
+        const msg = e.data;
+        if (!msg || msg.source !== 'character-library-host') return;
+        if (msg.type === 'cl-open-lorebooks') queueLorebooksOpen(!!msg.lorebooksOnly);
+        else if (msg.type === 'cl-show-library') suspendLorebooksToLibrary();
+    });
+}
+
+async function refreshLorebookUsedByWhenReady() {
+    const start = Date.now();
+    while (Date.now() - start < 20000) {
+        if (typeof window.refreshLorebookUsedBy === 'function') {
+            try { await window.refreshLorebookUsedBy(); } catch (e) { console.warn('[Lorebooks] used-by refresh failed', e); }
+            return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
     }
 }
 
@@ -8331,6 +9085,12 @@ function setupEmbeddedUI() {
 document.addEventListener('DOMContentLoaded', async () => {
     // Lock view-toggle / bottom-nav until fetchCharacters finishes (eg. user cant tap into Chats mid-load)
     document.documentElement.classList.add('cl-initial-loading');
+
+    setupLorebooksHostBridge();
+    if (launchLorebooks) queueLorebooksOpen(launchLorebooksOnly);
+    if (isEmbedded && window.parent !== window) {
+        window.parent.postMessage({ source: 'character-library', type: 'cl-ready' }, window.location.origin);
+    }
 
     if (isEmbedded) {
         setupEmbeddedUI();
@@ -8413,6 +9173,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     } finally {
         // Unlock even on fetch failure so the user isnt stranded
         document.documentElement.classList.remove('cl-initial-loading');
+        // Book list can paint before this returns. Fill "used by" once names exist.
+        refreshLorebookUsedByWhenReady();
     }
     setupEventListeners();
 
@@ -8559,6 +9321,9 @@ function showConfirm({
     iconColor = '',
     confirmLabel = 'Confirm',
     cancelLabel = 'Cancel',
+    alternateLabel = '',
+    alternateValue = 'alternate',
+    alternateDanger = false,
     extraLabel = '',
     danger = false,
 } = {}) {
@@ -8578,6 +9343,7 @@ function showConfirm({
                 </div>
                 <div class="confirm-modal-footer">
                     <button type="button" class="action-btn secondary" id="clConfirmCancelBtn"></button>
+                    <button type="button" class="action-btn hidden" id="clConfirmAlternateBtn"></button>
                     <button type="button" class="action-btn secondary hidden" id="clConfirmExtraBtn"></button>
                     <button type="button" class="action-btn" id="clConfirmConfirmBtn"></button>
                 </div>
@@ -8585,10 +9351,12 @@ function showConfirm({
         document.body.appendChild(overlay);
 
         const cancelFn = () => { overlay.classList.add('hidden'); overlay._resolve?.(false); };
+        const alternateFn = () => { overlay.classList.add('hidden'); overlay._resolve?.(overlay._alternateValue); };
         const confirmFn = () => { overlay.classList.add('hidden'); overlay._resolve?.(true); };
         const extraFn = () => { overlay.classList.add('hidden'); overlay._resolve?.('extra'); };
 
         document.getElementById('clConfirmCancelBtn').addEventListener('click', cancelFn);
+        document.getElementById('clConfirmAlternateBtn').addEventListener('click', alternateFn);
         document.getElementById('clConfirmConfirmBtn').addEventListener('click', confirmFn);
         document.getElementById('clConfirmExtraBtn').addEventListener('click', extraFn);
         overlay.addEventListener('click', e => { if (e.target === overlay) cancelFn(); });
@@ -8607,9 +9375,11 @@ function showConfirm({
     const msgEl = document.getElementById('clConfirmMessage');
     const iconEl = document.getElementById('clConfirmIcon');
     const cancelBtn = document.getElementById('clConfirmCancelBtn');
+    const alternateBtn = document.getElementById('clConfirmAlternateBtn');
     const confirmBtn = document.getElementById('clConfirmConfirmBtn');
     // Intent badge: red for destructive, accent otherwise. Caller icon overrides the glyph.
     overlay.classList.toggle('cl-confirm-danger', !!danger);
+    overlay.classList.toggle('cl-confirm-three-actions', !!alternateLabel);
     if (iconEl) {
         iconEl.className = icon || (danger ? 'fa-solid fa-triangle-exclamation' : 'fa-solid fa-circle-question');
         iconEl.style.color = iconColor || '';
@@ -8626,6 +9396,13 @@ function showConfirm({
         msgEl.style.display = (blocksHtml || message) ? '' : 'none';
     }
     if (cancelBtn) cancelBtn.textContent = cancelLabel;
+    if (alternateBtn) {
+        alternateBtn.textContent = alternateLabel;
+        alternateBtn.classList.toggle('hidden', !alternateLabel);
+        alternateBtn.classList.toggle('danger', !!alternateDanger);
+        alternateBtn.classList.toggle('secondary', !alternateDanger);
+    }
+    overlay._alternateValue = alternateValue;
     if (confirmBtn) {
         confirmBtn.textContent = confirmLabel;
         confirmBtn.classList.toggle('danger', !!danger);
@@ -9051,8 +9828,11 @@ async function fetchAndAddCharacter(avatarFileName, options = {}) {
 
         prepareCharacterKeys([char]);
         const slim = slimCharacter(char);
-        allCharacters.push(slim);
-        currentCharacters.push(slim);
+        for (const list of [allCharacters, currentCharacters]) {
+            const index = list.findIndex(existing => existing.avatar === slim.avatar);
+            if (index === -1) list.push(slim);
+            else list[index] = slim;
+        }
 
         _needsCharacterRefresh = true;
         return slim;
@@ -9366,10 +10146,10 @@ function processAndRender(data) {
         recoverShallowExtensions(_recoveryGeneration);
     }
     
-    // Populate Tags set for the filter dropdown
+    // Populate Tags set for the filter dropdown (card-embedded + SillyTavern's own tags)
     const allTags = new Map();
     allCharacters.forEach(c => {
-         const tags = getTags(c);
+         const tags = getFilterableTags(c);
          if (Array.isArray(tags)) {
              tags.forEach(t => allTags.set(t, (allTags.get(t) || 0) + 1));
          }
@@ -9726,9 +10506,50 @@ function reconcileTagFiltersWithAliases() {
 }
 
 function getTags(char) {
-    if (Array.isArray(char.tags)) return char.tags;
-    if (char.data && Array.isArray(char.data.tags)) return char.data.tags;
-    return [];
+    const raw = Array.isArray(char.tags) ? char.tags
+        : (char.data && Array.isArray(char.data.tags)) ? char.data.tags
+        : [];
+    // Filter empty/whitespace-only tags so they never show anywhere.
+    return raw.filter(t => typeof t === 'string' && t.trim().length > 0);
+}
+
+/**
+ * Read-only view of SillyTavern's own tag system (Settings > Tags), which is entirely separate
+ * from the tags embedded in a card's own data.tags. Read directly from SillyTavern's tags/tagMap
+ * via its public getContext() API - never written back, so ST's tag UI/storage is untouched.
+ * @param {object} char
+ * @returns {string[]} ST tag names for this character, prefixed to stay visually distinct from
+ *   card-embedded tags of the same name in the filter list.
+ */
+function getSTTagNamesForCharacter(char) {
+    try {
+        const context = getSTContext();
+        const tagIds = context?.tagMap?.[char.avatar];
+        if (!Array.isArray(tagIds) || tagIds.length === 0) return [];
+        const tagsById = context.tags;
+        if (!Array.isArray(tagsById)) return [];
+        return tagIds
+            .map(id => tagsById.find(t => t.id === id)?.name)
+            .filter(Boolean)
+            .map(name => `ST: ${name}`);
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * Tags usable for filtering: card-embedded tags plus SillyTavern's own tags (read-only, see
+ * getSTTagNamesForCharacter). Only used at filter-matching/filter-popup-population call sites -
+ * getTags() itself stays card-tags-only everywhere else (dedupe, batch tagging, sidebar display),
+ * since those write to or represent the card, not ST's separate tag system.
+ * @param {object} char
+ * @returns {string[]}
+ */
+function getFilterableTags(char) {
+    const cardTags = getTags(char);
+    const stTags = getSTTagNamesForCharacter(char);
+    if (stTags.length === 0) return cardTags;
+    return [...cardTags, ...stTags];
 }
 
 // ========================================
@@ -10269,6 +11090,12 @@ function setupCharacterGridDelegates() {
         const char = currentCharByAvatar.get(avatar);
         if (!char) return;
 
+        if (e.target.closest('.card-quick-chat')) {
+            e.stopPropagation();
+            window.chatsModule?.openChat?.(char, char.chat);
+            return;
+        }
+
         // Delegate to multi-select module if active
         if (window.handleCardClickForMultiSelect && window.handleCardClickForMultiSelect(char, card)) {
             return; // Multi-select handled it
@@ -10426,6 +11253,19 @@ function createCharacterCard(char) {
         card.appendChild(favDiv);
     }
 
+    // Quick-open the character's most recent chat directly, without going through the detail
+    // modal - char.chat is the card's most-recent chat filename (see isActiveChat's note in
+    // chats.js), a stable no-network signal already on the character object.
+    if (char.chat) {
+        const quickChatBtn = document.createElement('div');
+        quickChatBtn.className = 'card-quick-chat';
+        quickChatBtn.title = 'Open most recent chat';
+        const quickChatIcon = document.createElement('i');
+        quickChatIcon.className = 'fa-solid fa-comment';
+        quickChatBtn.appendChild(quickChatIcon);
+        card.appendChild(quickChatBtn);
+    }
+
     // Playlist indicator
     if (window.playlistsIsCharInAny?.(char.avatar)) {
         const pls = window.playlistsGetForChar?.(char.avatar) || [];
@@ -10570,6 +11410,94 @@ function resetTabScrollPositions() {
     if (modalBody) modalBody.scrollTop = 0;
 }
 
+/**
+ * Drop a CDN's downscale parameters so the gallery shows the full-resolution original.
+ *
+ * Card authors embed whatever the site's editor produced, and those URLs are routinely capped —
+ * JanitorAI's image host serves `?width=600`, which is a preview, not the upload. Dropping the
+ * cap is a large, free quality win; nothing about the file itself is smaller.
+ *
+ * Only the sizing keys are removed. Some hosts sign their URLs, so anything else is left alone
+ * and callers keep the original as a fallback for hosts where the cap is not optional.
+ */
+const IMAGE_SCALING_PARAMS = ['width', 'height', 'w', 'h', 'size', 's'];
+
+function stripImageScalingParams(url) {
+    const q = url.indexOf('?');
+    if (q === -1) return url;
+    try {
+        const parsed = new URL(url);
+        let touched = false;
+        for (const key of IMAGE_SCALING_PARAMS) {
+            if (parsed.searchParams.has(key)) { parsed.searchParams.delete(key); touched = true; }
+        }
+        if (!touched) return url;
+        return parsed.searchParams.size === 0
+            ? parsed.origin + parsed.pathname
+            : parsed.toString();
+    } catch {
+        return url;
+    }
+}
+
+// Media URLs a card carries in its own text. With localization off nothing is downloaded, so the
+// gallery folder is empty and the tab would render "No media found" even though the card has a
+// full image set — these entries let it show that set straight from the source CDN.
+//
+// Walks collectCardTextChunks + extractMediaUrls rather than a private regex, so the gallery sees
+// exactly the set the localization pipeline would have downloaded: same surfaces (system_prompt,
+// post_history_instructions, provider taglines, lorebook entries) and same link syntaxes
+// (markdown, <img>, CSS url(), bare). Requires a hydrated card; slim ones have the fields stripped.
+function collectRemoteCardMedia(card) {
+    if (!card) return [];
+
+    const chunks = collectCardTextChunks(card);
+    const seen = new Set();
+    const out = [];
+    for (const text of [...chunks.main, ...chunks.lorebook]) {
+        for (const url of extractMediaUrls(text)) {
+            if (seen.has(url)) continue;
+            seen.add(url);
+            // Audio has its own section built from local files only; nothing to render remotely.
+            if (/\.(?:mp3|wav|ogg|m4a|flac|aac)(?:\?|$)/i.test(url)) continue;
+            const full = stripImageScalingParams(url);
+            out.push({
+                url: full,
+                // Hosts that sign their sizing params 403 without them; fall back to what the card said.
+                fallbackUrl: full === url ? null : url,
+                type: /\.(?:mp4|webm|mov)(?:\?|$)/i.test(url) ? 'video' : 'image',
+            });
+        }
+    }
+    return out;
+}
+
+/**
+ * Drop remote entries whose file was already downloaded, and give each survivor a display name.
+ *
+ * A localized copy is stored as `localized_media_<ts>_<hash>_<originalName>.<ext>`, so the match
+ * is on the basename: exact, or the local name ending in `_<basename>`. Without this a card that
+ * was localized once would show every picture twice.
+ */
+function dedupeRemoteAgainstLocal(remoteMedia, localNames) {
+    const localBasenames = new Set(
+        (localNames || []).map(name => String(name || '').replace(/\.[^.]+$/, '').toLowerCase())
+    );
+    const out = [];
+    for (const { url, fallbackUrl, type } of remoteMedia || []) {
+        const name = decodeURIComponent(url.split('?')[0].split('/').pop() || url);
+        const base = name.replace(/\.[^.]+$/, '').toLowerCase();
+        let localized = false;
+        if (base) {
+            for (const localBase of localBasenames) {
+                if (localBase === base || localBase.endsWith(`_${base}`)) { localized = true; break; }
+            }
+        }
+        if (!localized) out.push({ name, url, fallbackUrl, type });
+    }
+    return out;
+}
+
 // Fetch User Images for Character
 // charOrName can be a character object or a character name string
 // If unique gallery folders are enabled, we use the unique folder name
@@ -10580,25 +11508,29 @@ async function fetchCharacterImages(charOrName) {
     // Determine the folder name to use
     let folderName;
     let displayName;
-    
+    let card = null;
+
     if (charOrName && typeof charOrName === 'object') {
         // It's a character object - use getGalleryFolderName for proper unique folder support
+        card = charOrName;
         folderName = getGalleryFolderName(charOrName);
         displayName = charOrName.name || folderName;
     } else {
         // It's a string - try to find the character and get their unique folder
         const charName = String(charOrName);
         displayName = charName;
-        
+
         // Try to find a matching character for unique folder lookup
         // First check activeChar (most common case when viewing gallery)
         if (activeChar && activeChar.name === charName) {
+            card = activeChar;
             folderName = getGalleryFolderName(activeChar);
         } else {
             // Try to find by name in allCharacters
             const matchingChars = allCharacters.filter(c => c.name === charName);
             if (matchingChars.length === 1) {
                 // Exactly one match - use its unique folder
+                card = matchingChars[0];
                 folderName = getGalleryFolderName(matchingChars[0]);
             } else {
                 // Multiple or no matches - use the name as-is
@@ -10615,7 +11547,7 @@ async function fetchCharacterImages(charOrName) {
 
         if (response.ok) {
             const files = await response.json();
-            renderGalleryImages(files, folderName);
+            renderGalleryImages(files, folderName, collectRemoteCardMedia(card));
         } else {
             // A missing folder is a 200 [] (ST mkdirs it), so non-ok is a real failure, not an empty gallery.
             console.warn(`[Gallery] Failed to list images: ${response.status}`);
@@ -10785,6 +11717,8 @@ function _populateGalleryGrid(startIndex, endIndex) {
             const img = document.createElement('img');
             img.decoding = 'async';
             img.title = fileName;
+            const fallbackUrl = state.galleryMedia[i].fallbackUrl;
+            if (fallbackUrl) img.dataset.fallbackUrl = fallbackUrl;
             if (mediaIsGif) {
                 img.src = mediaUrl;
                 img.dataset.gif = '1';
@@ -10823,7 +11757,7 @@ function _populateGalleryGridThumb(startIndex, endIndex) {
     const fragment = document.createDocumentFragment();
 
     for (let i = startIndex; i < endIndex; i++) {
-        const { fileName, type } = state.visualMedia[i];
+        const { fileName, type, remoteUrl } = state.visualMedia[i];
         const mediaUrl = state.galleryMedia[i].url;
         const mediaContainer = document.createElement('div');
         const mediaIsGif = type === 'image' && /\.gif$/i.test(fileName);
@@ -10839,13 +11773,16 @@ function _populateGalleryGridThumb(startIndex, endIndex) {
                 </div>
             `;
         } else {
-            // types cl-helper's Jimp cant decode go straight to the full URL
-            const thumbUrl = /\.(bmp|avif|tiff?)$/i.test(fileName)
+            // cl-helper only thumbnails files it can see on disk, and the types Jimp cant
+            // decode go straight to the full URL.
+            const thumbUrl = (remoteUrl || /\.(bmp|avif|tiff?)$/i.test(fileName))
                 ? mediaUrl
                 : buildGalleryThumbUrl(state.safeFolderName, fileName);
             const img = document.createElement('img');
             img.decoding = 'async';
             img.title = fileName;
+            const fallbackUrl = state.galleryMedia[i].fallbackUrl;
+            if (fallbackUrl) img.dataset.fallbackUrl = fallbackUrl;
             img.dataset.gif = mediaIsGif ? '1' : '0';
             img.dataset.thumbUrl = thumbUrl;
             img.dataset.fullUrl = mediaUrl;
@@ -10860,7 +11797,7 @@ function _populateGalleryGridThumb(startIndex, endIndex) {
     state.imagesGrid.appendChild(fragment);
 }
 
-function renderGalleryImages(files, folderName) {
+function renderGalleryImages(files, folderName, remoteMedia = []) {
     const grid = document.getElementById('spritesGrid');
     grid.innerHTML = '';
     if (_galleryImageObserver) { _galleryImageObserver.disconnect(); }
@@ -10871,7 +11808,7 @@ function renderGalleryImages(files, folderName) {
     // Reset grid class - we'll manage layout with sections inside
     grid.className = 'gallery-media-container';
     
-    if (!files || files.length === 0) {
+    if ((!files || files.length === 0) && remoteMedia.length === 0) {
         renderSimpleEmpty(grid, 'No media found.');
         return;
     }
@@ -10881,7 +11818,7 @@ function renderGalleryImages(files, folderName) {
     const videoFiles = [];
     const audioFiles = [];
     
-    files.forEach(file => {
+    (files || []).forEach(file => {
         const fileName = (typeof file === 'string') ? file : file.name;
         if (!fileName) return;
         
@@ -10945,10 +11882,14 @@ function renderGalleryImages(files, folderName) {
         grid.appendChild(audioSection);
     }
     
+    const remoteVisual = dedupeRemoteAgainstLocal(remoteMedia, [...imageFiles, ...videoFiles])
+        .map(({ name, url, fallbackUrl, type }) => ({ fileName: name, type, remoteUrl: url, fallbackUrl }));
+
     // Combine images and videos for the visual media section
     const visualMedia = [
         ...imageFiles.map(fileName => ({ fileName, type: 'image' })),
-        ...videoFiles.map(fileName => ({ fileName, type: 'video' }))
+        ...videoFiles.map(fileName => ({ fileName, type: 'video' })),
+        ...remoteVisual
     ];
     
     // Render visual media (images + videos)
@@ -10957,8 +11898,8 @@ function renderGalleryImages(files, folderName) {
         imagesSection.className = 'gallery-images-section';
         
         const hasOtherMedia = audioFiles.length > 0;
-        const imageCount = imageFiles.length;
-        const videoCount = videoFiles.length;
+        const imageCount = visualMedia.filter(m => m.type === 'image').length;
+        const videoCount = visualMedia.filter(m => m.type === 'video').length;
         
         if (hasOtherMedia) {
             // Add section title if we also have audio
@@ -10976,15 +11917,26 @@ function renderGalleryImages(files, folderName) {
         const imagesGrid = document.createElement('div');
         imagesGrid.className = 'gallery-sprites-grid';
         
-        const galleryMedia = visualMedia.map(({ fileName, type }) => ({
+        const galleryMedia = visualMedia.map(({ fileName, type, remoteUrl, fallbackUrl }) => ({
             name: fileName,
-            url: `/user/images/${encodeURIComponent(safeFolderName)}/${encodeURIComponent(fileName)}`,
+            url: remoteUrl || `/user/images/${encodeURIComponent(safeFolderName)}/${encodeURIComponent(fileName)}`,
+            fallbackUrl: fallbackUrl || null,
             type: type
         }));
         
         _galleryState = { visualMedia, galleryMedia, safeFolderName, imagesGrid, imagesSection, currentPage: 0, paginationEls: [] };
         
         imagesGrid.addEventListener('click', _handleGalleryGridClick);
+        // Stripping the CDN's size cap is a guess about that host; if the full-resolution URL is
+        // rejected, drop back to exactly what the card embedded rather than showing a broken tile.
+        imagesGrid.addEventListener('error', (e) => {
+            const img = e.target;
+            if (img.tagName !== 'IMG' || img.dataset.fellBack === '1') return;
+            const fallback = img.dataset.fallbackUrl;
+            if (!fallback) return;
+            img.dataset.fellBack = '1';
+            img.src = fallback;
+        }, true);
         
         if (visualMedia.length > GALLERY_PAGE_SIZE) {
             const paginationTop = _createGalleryPagination();
@@ -11002,7 +11954,7 @@ function renderGalleryImages(files, folderName) {
     }
     
     // Show empty state if no media at all
-    if (imageFiles.length === 0 && videoFiles.length === 0 && audioFiles.length === 0) {
+    if (visualMedia.length === 0 && audioFiles.length === 0) {
         renderSimpleEmpty(grid, 'No media found.');
     }
 }
@@ -11546,6 +12498,7 @@ function prefetchModalNeighbors(currentChar) {
 
 function isCharModalDirty() {
     if (!activeChar || isEditLocked) return false;
+    if (!Object.keys(originalValues).length) return false;
     if (pendingAvatarFile) return true;
     try {
         const current = collectEditValues();
@@ -11555,21 +12508,41 @@ function isCharModalDirty() {
     }
 }
 
-function confirmDiscardCharModalEdits() {
-    return showConfirm({
-        title: 'Discard unsaved edits?',
-        message: `You have unsaved changes to ${getCharacterName(activeChar) || 'this character'}. Discard them?`,
-        confirmLabel: 'Discard',
+async function resolveUnsavedCharModalEdits() {
+    const characterName = getCharacterName(activeChar) || 'this character';
+    const action = await showConfirm({
+        title: 'Unsaved edits',
+        message: `You have unsaved changes to ${characterName}. Save them before continuing?`,
+        icon: 'fa-solid fa-pen-to-square',
+        confirmLabel: 'Save',
         cancelLabel: 'Keep Editing',
-        danger: true,
+        alternateLabel: 'Discard',
+        alternateValue: 'discard',
+        alternateDanger: true,
     });
+
+    if (action === 'discard') return 'discard';
+    if (action !== true) return 'cancel';
+
+    try {
+        const prepared = prepareCharacterSave();
+        if (!prepared || (prepared.changes.length === 0 && !prepared.hasAvatarChange)) {
+            pendingUpdates = null;
+            return 'save';
+        }
+        return await performSave() ? 'save' : 'cancel';
+    } catch (error) {
+        console.error('[Edit] Immediate save failed:', error);
+        showToast(`Could not save character: ${error.message}`, 'error');
+        return 'cancel';
+    }
 }
 
 // User-initiated close. Programmatic closers (post-delete cleanup, save success) keep calling closeModal directly.
 async function maybeCloseModal() {
     if (isCharModalDirty()) {
-        const ok = await confirmDiscardCharModalEdits();
-        if (!ok) return;
+        const action = await resolveUnsavedCharModalEdits();
+        if (action === 'cancel') return;
     }
     closeModal();
 }
@@ -11596,11 +12569,14 @@ async function openModal(char, { navList } = {}) {
     // Fresh open picks the nav source; swaps/steps pass no navList so the session's source persists while paging.
     if (!isSwap) modalNavList = navList ?? null;
     if (isSwap && isCharModalDirty()) {
-        const ok = await confirmDiscardCharModalEdits();
-        if (!ok) return;
+        const action = await resolveUnsavedCharModalEdits();
+        if (action === 'cancel') return;
+        if (_editPanePopulated) {
+            originalValues = collectEditValues();
+        }
     }
     if (isSwap) {
-        setEditLock(true);
+        setEditLock(!getSetting('alwaysEditEnabled'));
         clearPendingAvatar();
     }
 
@@ -11675,21 +12651,28 @@ async function openModal(char, { navList } = {}) {
         }
     }
 
-    // Dates/Tokens
-    let dateDisplay = 'Unknown';
+    // Dates/Tokens - shown as two separate fields: when this card was added to the library
+    // (date_added, local/filesystem-derived) vs. what the card itself claims as its creation
+    // date (create_date, provider- or authoring-tool-supplied - not necessarily trustworthy,
+    // but distinct information the previous single merged "Created:" field discarded).
+    let dateAddedDisplay = 'Unknown';
     if (char.date_added) {
         const d = new Date(Number(char.date_added));
-        if (!isNaN(d.getTime())) dateDisplay = d.toLocaleDateString();
-    } else {
-        const rawCreateDate = getCharacterCreateDateValue(char);
-        if (rawCreateDate) {
-            const d = new Date(rawCreateDate);
-            if (!isNaN(d.getTime())) dateDisplay = formatDateTime(rawCreateDate);
-            else if (rawCreateDate.length < 20) dateDisplay = rawCreateDate;
-        }
+        if (!isNaN(d.getTime())) dateAddedDisplay = d.toLocaleDateString();
     }
-    
-    document.getElementById('modalDate').innerText = dateDisplay;
+    document.getElementById('modalDateAdded').innerText = dateAddedDisplay;
+
+    const dateCreatedContainer = document.getElementById('modalDateCreatedContainer');
+    const rawCreateDate = getCharacterCreateDateValue(char);
+    if (rawCreateDate) {
+        let dateCreatedDisplay = rawCreateDate;
+        const d = new Date(rawCreateDate);
+        if (!isNaN(d.getTime())) dateCreatedDisplay = formatDateTime(rawCreateDate);
+        document.getElementById('modalDateCreated').innerText = dateCreatedDisplay;
+        if (dateCreatedContainer) dateCreatedContainer.style.display = '';
+    } else if (dateCreatedContainer) {
+        dateCreatedContainer.style.display = 'none';
+    }
 
     // Author
     const author = char.creator || (char.data ? char.data.creator : "") || "";
@@ -12018,12 +13001,13 @@ async function populateEditPane() {
     const creatorNotesEdit = char.creator_notes || (char.data ? char.data.creator_notes : "") || "";
     const charVersion = char.character_version || (char.data ? char.data.character_version : "") || "";
 
-    // Tags: always store as array, never as comma-delimited string
+    // Tags: always store as array, never as comma-delimited string.
+    // Filter out empty/whitespace-only tags that sneak in from various import sources.
     const rawTags = char.tags || (char.data ? char.data.tags : []) || [];
     if (Array.isArray(rawTags)) {
-        _editTagsArray = [...rawTags];
+        _editTagsArray = rawTags.map(t => String(t || '').trim()).filter(Boolean);
     } else if (typeof rawTags === "string") {
-        _editTagsArray = rawTags.split(',').map(t => t.trim()).filter(t => t);
+        _editTagsArray = rawTags.split(',').map(t => t.trim()).filter(Boolean);
     } else {
         _editTagsArray = [];
     }
@@ -12043,16 +13027,19 @@ async function populateEditPane() {
     document.getElementById('editCreatorNotes').value = creatorNotesEdit;
 
     // Populate alternate greetings editor
-    const altGreetings = char.alternate_greetings || (char.data ? char.data.alternate_greetings : []) || [];
-    populateAltGreetingsEditor(altGreetings);
+    const altGreetings = (char.data?.alternate_greetings ?? char.alternate_greetings) ?? [];
+    const rawAltNames = char.data?.extensions?.alternate_greetings_names ?? [];
+    const altGreetingNames = normalizeAltGreetingNames(rawAltNames, altGreetings.length);
+    populateAltGreetingsEditor(altGreetings, altGreetingNames);
 
     // Populate lorebook editor
-    const characterBook = char.character_book || (char.data ? char.data.character_book : null);
+    const characterBook = (char.data?.character_book ?? char.character_book) ?? null;
     populateLorebookEditor(characterBook);
 
     // Store raw data for cancel/restore
     originalRawData = {
         altGreetings: altGreetings ? [...altGreetings] : [],
+        altGreetingNames: altGreetingNames ? [...altGreetingNames] : [],
         characterBook: characterBook ? JSON.parse(JSON.stringify(characterBook)) : null
     };
 
@@ -12074,11 +13061,634 @@ async function populateEditPane() {
         post_history_instructions: document.getElementById('editPostHistoryInstructions').value,
         creator_notes: document.getElementById('editCreatorNotes').value,
         alternate_greetings: getAltGreetingsFromEditor(),
+        alternate_greetings_names: getAltGreetingNamesFromEditor(),
         character_book: getCharacterBookFromEditor()
     };
 
     // Lock edit fields by default (must come after editor population so dynamic elements are locked)
-    setEditLock(true);
+    setEditLock(!getSetting('alwaysEditEnabled'));
+
+    // Populate nickname editor if SillyTavern-Nicknames extension is available
+    populateNicknameEditor('cl-nickname-section', activeChar);
+
+    // Initialize Alternate Fields buttons
+    initAltFieldButtons();
+}
+
+// =====================================================
+// Nicknames Extension Integration
+// =====================================================
+
+const NICKNAME_EDITOR_HTML = `
+<div class="nickname-editor-container">
+    <div class="nickname-header-row flex-container justifySpaceBetween alignItemsCenter flexNoWrap">
+        <h4 class="nickname-title flex-container alignItemsCenter flexNoWrap gap-sm">
+            <span data-i18n="Nickname">Nickname</span>
+            <i class="fa-solid fa-circle-info opacity50p nickname-extension-icon"
+               title="This section is provided by the SillyTavern-Nicknames extension"></i>
+        </h4>
+        <div class="context-indicators flex-container flexNoWrap gap-sm">
+            <i class="fa-solid fa-globe context-icon" data-context="global"></i>
+            <i class="fa-solid fa-user context-icon" data-context="char"></i>
+            <i class="fa-solid fa-message context-icon" data-context="chat"></i>
+        </div>
+    </div>
+    <div class="nickname-input-row">
+        <input type="text" class="nickname-input text_pole" placeholder="No nickname set" maxlength="100" />
+        <button class="nickname-save-btn menu_button" title="Save to selected context"><i class="fa-solid fa-check"></i></button>
+        <button class="nickname-clear-btn menu_button" title="Clear from selected context"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="nickname-context-selector">
+        <div class="context-buttons flex-container alignItemsCenter flexNoWrap gap-sm">
+            <small data-i18n="Save to:">Save to:</small>
+            <div class="context-btn menu_button menu_button_icon" data-context="global" title="Applies everywhere">
+                <i class="fa-solid fa-globe fa-fw"></i>
+                <span data-i18n="Global">Global</span>
+            </div>
+            <div class="context-btn menu_button menu_button_icon active" data-context="char" title="For this character-persona pair (personas only)">
+                <i class="fa-solid fa-user fa-fw"></i>
+                <span data-i18n="Char">Char</span>
+            </div>
+            <div class="context-btn menu_button menu_button_icon" data-context="chat" title="For this chat only">
+                <i class="fa-solid fa-message fa-fw"></i>
+                <span data-i18n="Chat">Chat</span>
+            </div>
+        </div>
+    </div>
+    <div class="nickname-summary" style="margin-top: 8px;">
+        <div class="inline-drawer-toggle inline-drawer-header flex-container alignItemsCenter gap-sm">
+            <small data-i18n="View all levels">View all levels</small>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+            <div class="nickname-levels">
+                <div class="level-row flex-container justifySpaceBetween alignItemsCenter flexNoWrap" data-level="global">
+                    <span class="level-name flex-container alignItemsCenter flexNoWrap gap-sm"><i class="fa-solid fa-globe"></i> Global:</span>
+                    <span class="level-value"></span>
+                </div>
+                <div class="level-row flex-container justifySpaceBetween alignItemsCenter flexNoWrap" data-level="char">
+                    <span class="level-name flex-container alignItemsCenter flexNoWrap gap-sm"><i class="fa-solid fa-user"></i> Character:</span>
+                    <span class="level-value"></span>
+                </div>
+                <div class="level-row flex-container justifySpaceBetween alignItemsCenter flexNoWrap" data-level="chat">
+                    <span class="level-name flex-container alignItemsCenter flexNoWrap gap-sm"><i class="fa-solid fa-message"></i> Chat:</span>
+                    <span class="level-value"></span>
+                </div>
+                <div class="level-row effective flex-container justifySpaceBetween alignItemsCenter flexNoWrap" data-level="effective">
+                    <span class="level-name flex-container alignItemsCenter flexNoWrap gap-sm"><i class="fa-solid fa-check-circle"></i> Effective:</span>
+                    <span class="level-value"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>`;
+
+function populateNicknameEditor(containerId, char) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+
+    const ctx = getSTContext();
+    if (!ctx) return;
+
+    // Check if Nicknames extension is installed AND enabled (not just disabled in the menu).
+    // `extensionSettings?.nicknames != null` alone is insufficient: that settings entry
+    // persists after the extension is disabled, so it would wrongly report it as present.
+    const hasNicknames = isExtensionActive('third-party/SillyTavern-Nicknames', { settingsKey: 'nicknames' });
+    if (!hasNicknames) {
+        container.innerHTML = `<small class="opacity50p"><i class="fa-solid fa-puzzle-piece"></i> Install <a href="https://github.com/SillyTavern/SillyTavern-Nicknames" target="_blank" rel="noopener noreferrer"><strong>SillyTavern-Nicknames</strong></a> to set custom nicknames for this character.</small>`;
+        return;
+    }
+
+    if (!char) return;
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = NICKNAME_EDITOR_HTML;
+    const editor = wrapper.firstElementChild;
+    container.appendChild(editor);
+
+    const charAvatar = char.avatar;
+    const personaKey = ctx.user_avatar || '';
+
+    // --- Helpers to read/write nicknames via parent context ---
+    function getNicknameMappings() {
+        const c = getSTContext();
+        return c?.extensionSettings?.nicknames?.mappings || {};
+    }
+    function getChatNicknames() {
+        const c = getSTContext();
+        return c?.chatMetadata?.nicknames || {};
+    }
+
+    function readNickname(level) {
+        const mappings = getNicknameMappings();
+        if (level === 'global') {
+            return mappings?.global?.chars?.[charAvatar] || '';
+        }
+        if (level === 'char') {
+            return mappings?.char?.[charAvatar]?.personas?.[personaKey] || '';
+        }
+        if (level === 'chat') {
+            return getChatNicknames()?.chars?.[charAvatar] || '';
+        }
+        return '';
+    }
+
+    function writeNickname(level, value) {
+        const c = getSTContext();
+        if (!c) return;
+        const mappings = getNicknameMappings();
+
+        if (level === 'global') {
+            if (!mappings.global) mappings.global = { personas: {}, chars: {} };
+            if (!mappings.global.chars) mappings.global.chars = {};
+            if (value) { mappings.global.chars[charAvatar] = value; }
+            else { delete mappings.global.chars[charAvatar]; }
+        } else if (level === 'char') {
+            if (!mappings.char) mappings.char = {};
+            if (!mappings.char[charAvatar]) mappings.char[charAvatar] = { personas: {} };
+            if (!mappings.char[charAvatar].personas) mappings.char[charAvatar].personas = {};
+            if (value) { mappings.char[charAvatar].personas[personaKey] = value; }
+            else { delete mappings.char[charAvatar].personas[personaKey]; }
+        } else if (level === 'chat') {
+            const chatMeta = c.chatMetadata || {};
+            if (!chatMeta.nicknames) chatMeta.nicknames = { personas: {}, chars: {} };
+            if (!chatMeta.nicknames.chars) chatMeta.nicknames.chars = {};
+            if (value) { chatMeta.nicknames.chars[charAvatar] = value; }
+            else { delete chatMeta.nicknames.chars[charAvatar]; }
+            c.saveChatDebounced?.();
+        }
+
+        c.extensionSettings.nicknames.mappings = mappings;
+        c.saveSettingsDebounced?.();
+    }
+
+    // --- State ---
+    // Auto-detect which context has a saved nickname so input isn't blank
+    let selectedContext = readNickname('chat') ? 'chat' : readNickname('char') ? 'char' : readNickname('global') ? 'global' : 'global';
+
+    // --- DOM refs ---
+    const input = editor.querySelector('.nickname-input');
+    const saveBtn = editor.querySelector('.nickname-save-btn');
+    const clearBtn = editor.querySelector('.nickname-clear-btn');
+    const contextBtns = editor.querySelectorAll('.context-btn');
+    const contextIcons = editor.querySelectorAll('.context-icon');
+    const drawerToggle = editor.querySelector('.inline-drawer-toggle');
+    const drawerContent = editor.querySelector('.inline-drawer-content');
+    const levelValues = editor.querySelectorAll('.level-value');
+
+    function getEffectiveNickname() {
+        const chatVal = readNickname('chat');
+        const charVal = readNickname('char');
+        const globalVal = readNickname('global');
+        return chatVal || charVal || globalVal || '';
+    }
+
+    function refreshUI() {
+        const val = readNickname(selectedContext) || getEffectiveNickname();
+        input.value = val;
+        input.placeholder = val ? '' : 'No nickname set';
+
+        contextBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.context === selectedContext));
+
+        // Context indicators: highlight if set at that level
+        contextIcons.forEach(icon => {
+            const level = icon.dataset.context;
+            icon.classList.toggle('opacity50p', !readNickname(level));
+            icon.classList.toggle('nickname-set', !!readNickname(level));
+        });
+
+        // Level summary
+        levelValues.forEach(el => {
+            const level = el.closest('.level-row')?.dataset.level;
+            if (level === 'effective') {
+                el.textContent = getEffectiveNickname() || '—';
+            } else {
+                el.textContent = readNickname(level) || '—';
+            }
+        });
+
+        clearBtn.disabled = !readNickname(selectedContext) && !getEffectiveNickname();
+    }
+
+    // --- Event listeners (wired in iframe, NOT delegated to parent) ---
+    contextBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            selectedContext = btn.dataset.context;
+            refreshUI();
+        });
+    });
+
+    saveBtn.addEventListener('click', () => {
+        const value = input.value.trim();
+        writeNickname(selectedContext, value);
+        refreshUI();
+    });
+
+    clearBtn.addEventListener('click', () => {
+        writeNickname(selectedContext, '');
+        input.value = '';
+        refreshUI();
+    });
+
+    input.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            saveBtn.click();
+        }
+    });
+
+    drawerToggle?.addEventListener('click', () => {
+        drawerContent?.classList.toggle('open');
+        const icon = drawerToggle.querySelector('.inline-drawer-icon');
+        icon?.classList.toggle('down');
+    });
+
+    refreshUI();
+}
+window.populateNicknameEditor = populateNicknameEditor;
+
+/**
+ * Populate nickname editor in the character creator.
+ * Shows an info message since nicknames require an existing character.
+ */
+function populateCreatorNicknameEditor(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = `<small class="opacity50p"><i class="fa-solid fa-circle-info"></i> Nickname editing available after character creation.</small>`;
+}
+window.populateCreatorNicknameEditor = populateCreatorNicknameEditor;
+
+// =====================================================
+// Alternate Fields Extension Integration
+// =====================================================
+
+const ALT_FIELD_CONFIGS = [
+    { saveKey: 'alt_descriptions',      label: 'Descriptions',      textareaIds: ['editDescription', 'creatorDescription'] },
+    { saveKey: 'alt_personalities',     label: 'Personalities',     textareaIds: ['editPersonality', 'creatorPersonality'] },
+    { saveKey: 'alt_scenarios',         label: 'Scenarios',         textareaIds: ['editScenario', 'creatorScenario'] },
+    { saveKey: 'alt_example_dialogue',  label: 'Example Dialogue',  textareaIds: ['editMesExample', 'creatorMesExample'] },
+    { saveKey: 'alt_main_prompts',      label: 'Main Prompts',      textareaIds: ['editSystemPrompt', 'creatorSystemPrompt'] },
+    { saveKey: 'alt_post_history',      label: 'Post-History Instructions', textareaIds: ['editPostHistoryInstructions', 'creatorPostHistory'] },
+];
+
+// Baseline snapshot + live-monitor handle for the Alt Fields popup session.
+// Used by Fix 6 (change detection -> "saved" toast) and Fix 3 (textarea monitoring).
+let _altFieldOpenData = null;
+let _altFieldMonitorHandler = null;
+let _altFieldNewIndex = -1;
+
+/**
+ * Reliable check for whether a SillyTavern extension is actually ACTIVE
+ * (installed AND not disabled in the extensions menu).
+ *
+ * ST tracks disabled extensions in `extension_settings.disabledExtensions`,
+ * which stores the full internal id (e.g. "third-party/SillyTavern-AlternateDescriptions").
+ * A bare `extensionSettings?.someKey != null` check is NOT sufficient: that settings
+ * entry persists even after the extension is disabled in the menu, so it would report
+ * the extension as present when it is in fact off. We therefore combine:
+ *   - disabled = id is in disabledExtensions
+ *   - installed = disabled (implies it exists) OR a settings key is present
+ *     OR the extension's DOM side-effect is visible in the parent document
+ * (AlternateDescriptions has no settings key of its own, so we rely on its
+ * `.alt_fields_button` injection, which only happens when it is loaded+enabled.)
+ *
+ * @param {string} extId - Full internal id, e.g. "third-party/SillyTavern-AlternateDescriptions"
+ * @param {{settingsKey?: string, domSelector?: string}} [opts]
+ * @returns {boolean}
+ */
+function isExtensionActive(extId, { settingsKey, domSelector } = {}) {
+    const ctx = getSTContext();
+    const disabled = ctx?.extensionSettings?.disabledExtensions || [];
+    const isDisabled = disabled.includes(extId);
+    // If it's in disabledExtensions it definitely exists; otherwise probe for a
+    // settings entry or a live DOM side-effect (the extension's own injection).
+    let installed = isDisabled;
+    if (!installed) {
+        if (settingsKey != null && ctx?.extensionSettings?.[settingsKey] != null) {
+            installed = true;
+        } else if (domSelector && typeof parent !== 'undefined' && parent?.document) {
+            try { installed = !!parent.document.querySelector(domSelector); } catch (_) { /* cross-origin */ }
+        }
+    }
+    return installed && !isDisabled;
+}
+
+function isAlternateFieldsInstalled() {
+    return isExtensionActive('third-party/SillyTavern-AlternateDescriptions', { domSelector: '.alt_fields_button' });
+}
+
+function initAltFieldButtons() {
+    const buttons = document.querySelectorAll('.alt-field-btn');
+    // Only surface the Alt Fields buttons when the AlternateDescriptions extension
+    // is actually installed + enabled. Otherwise users just see the plain main field.
+    const active = isAlternateFieldsInstalled();
+    buttons.forEach(btn => {
+        btn.classList.toggle('hidden', !active);
+        if (!active) return;
+        btn.addEventListener('click', () => {
+            const saveKey = btn.dataset.saveKey;
+            if (saveKey) openAltDescriptionsPopup(saveKey);
+        });
+    });
+}
+
+function getAltFieldData(saveKey) {
+    if (!activeChar) return [];
+    return activeChar?.data?.extensions?.alternate_fields?.[saveKey] || [];
+}
+
+// Snapshot every alternate-fields array (extensions.alternate_fields.*) for diff comparison.
+function collectAltFieldsSnapshot() {
+    const out = {};
+    for (const cfg of ALT_FIELD_CONFIGS) {
+        const arr = (activeChar?.data?.extensions?.alternate_fields?.[cfg.saveKey]) || [];
+        out[cfg.saveKey] = (Array.isArray(arr) ? arr : [arr]).map(s => String(s ?? ''));
+    }
+    return out;
+}
+
+function saveAltFieldData(saveKey, entries) {
+    const ctx = getSTContext();
+    if (!ctx || !activeChar) return;
+    if (!activeChar.data) activeChar.data = {};
+    if (!activeChar.data.extensions) activeChar.data.extensions = {};
+    if (!activeChar.data.extensions.alternate_fields) activeChar.data.extensions.alternate_fields = {};
+    activeChar.data.extensions.alternate_fields[saveKey] = entries;
+    window.applyCardFieldUpdates?.(activeChar.avatar, { [`extensions.alternate_fields.${saveKey}`]: entries });
+}
+
+async function openAltDescriptionsPopup(saveKey) {
+    const config = ALT_FIELD_CONFIGS.find(c => c.saveKey === saveKey);
+    if (!config || !activeChar) return;
+
+    await hydrateCharacter(activeChar);
+
+    const entries = getAltFieldData(saveKey);
+    const charName = activeChar?.name || 'Character';
+
+    const targetTextareaId = config.textareaIds.find(id => document.getElementById(id));
+    const targetTextarea = targetTextareaId ? document.getElementById(targetTextareaId) : null;
+
+    // Auto-register the current field as the first alternate when none exist yet
+    // (mirrors upstream AlternateDescriptions auto-save on first open). This makes
+    // the live "main" field render as "In Use" instead of prompting a manual save.
+    if (entries.length === 0) {
+        const currentContent = (targetTextarea?.value || '').trim();
+        if (currentContent) {
+            const seeded = [{ title: `${config.label} #1`, content: currentContent }];
+            saveAltFieldData(saveKey, seeded);
+            entries = getAltFieldData(saveKey);
+        }
+    }
+
+    document.getElementById('altModalTitle').textContent = `Alternate ${config.label} for ${charName}`;
+
+    const modal = document.getElementById('altDescriptionsModal');
+    const body = document.getElementById('altDescriptionsModalBody');
+    const addBtn = document.getElementById('altModalAddBtn');
+    const doneBtn = document.getElementById('altModalDoneBtn');
+    const closeBtn = document.getElementById('closeAltDescriptionsModal');
+
+    body.innerHTML = `
+        <div class="alt-popup-intro">
+            <small class="opacity50p">Save different versions of this field. Click <strong>Use</strong> to load an alternate into the editor, then save the character.</small>
+        </div>
+        <div id="alt-field-status"></div>
+        <div id="alt-field-list"></div>`;
+
+    const listEl = document.getElementById('alt-field-list');
+    renderAltFieldList(listEl, saveKey, config, targetTextarea);
+
+    // Fix 3: live-monitor the underlying field. When it changes we refresh the
+    // status banner and the active/Use indicators without rebuilding the list
+    // (mirrors upstream AlternateDescriptions setupFieldMonitoring).
+    _altFieldOpenData = getAltFieldData(saveKey);
+    if (targetTextarea) {
+        _altFieldMonitorHandler = () => {
+            renderAltFieldStatus(saveKey, config, targetTextarea);
+            refreshAltFieldActiveIndicators(listEl, saveKey, targetTextarea);
+        };
+        targetTextarea.addEventListener('input', _altFieldMonitorHandler);
+        targetTextarea.addEventListener('paste', _altFieldMonitorHandler);
+    }
+
+    addBtn.onclick = () => {
+        const currentData = getAltFieldData(saveKey);
+        const currentContent = targetTextarea?.value || '';
+        const newIndex = currentData.length;
+        currentData.push({
+            title: `${config.label} #${currentData.length + 1}`,
+            content: currentContent,
+        });
+        saveAltFieldData(saveKey, currentData);
+        // Newly added alternates are NOT "In Use" by default — only the entry the
+        // field was actually loaded from should keep that badge.
+        _altFieldNewIndex = newIndex;
+        renderAltFieldList(listEl, saveKey, config, targetTextarea);
+    };
+
+    const hideModal = () => {
+        // Fix 3: detach the live-monitor listeners so they don't leak.
+        if (targetTextarea && _altFieldMonitorHandler) {
+            targetTextarea.removeEventListener('input', _altFieldMonitorHandler);
+            targetTextarea.removeEventListener('paste', _altFieldMonitorHandler);
+            _altFieldMonitorHandler = null;
+        }
+        // Fix 6: report alt-field edits made during this popup session.
+        try {
+            const open = JSON.stringify(_altFieldOpenData || []);
+            const now = JSON.stringify(getAltFieldData(saveKey));
+            if (open !== now) showToast('Alternate fields saved', 'success');
+        } catch (_) { /* ignore */ }
+        _altFieldOpenData = null;
+        modal.classList.remove('visible');
+    };
+    doneBtn.onclick = hideModal;
+    closeBtn.onclick = hideModal;
+    modal.onclick = (e) => { if (e.target === modal) hideModal(); };
+
+    modal.classList.add('visible');
+}
+
+/**
+ * Renders the "current field vs saved alternates" status banner inside the
+ * Alternate Fields popup. Mirrors the upstream AlternateDescriptions extension:
+ * when the live field diverges from every saved alternate, prompt to "Save Current".
+ * @param {string} saveKey
+ * @param {object} config - entry from ALT_FIELD_CONFIGS
+ * @param {HTMLTextAreaElement|null} targetTextarea
+ */
+function renderAltFieldStatus(saveKey, config, targetTextarea) {
+    const statusEl = document.getElementById('alt-field-status');
+    if (!statusEl) return;
+
+    const currentContent = (targetTextarea?.value || '').trim();
+    const entries = getAltFieldData(saveKey);
+    const hasMatch = entries.some(e => (e.content || '').trim() === currentContent);
+
+    if (!hasMatch && currentContent) {
+        // Current field has been edited and no longer matches any saved alternate.
+        statusEl.className = 'alt-field-status alt-field-status--modified';
+        statusEl.innerHTML = `
+            <i class="fa-solid fa-exclamation-triangle"></i>
+            <span>Current ${config.label} has been modified and doesn't match any saved version.</span>
+            <button type="button" class="cl-btn cl-btn-secondary alt-save-current-btn" style="margin-left: auto; font-size: 12px; padding: 4px 10px;">
+                <i class="fa-solid fa-save"></i><span>Save Current</span>
+            </button>`;
+        const saveBtn = statusEl.querySelector('.alt-save-current-btn');
+        if (saveBtn) {
+            saveBtn.onclick = () => {
+                const data = getAltFieldData(saveKey);
+                const newIndex = data.length;
+                data.push({ title: `${config.label} #${data.length + 1}`, content: currentContent });
+                saveAltFieldData(saveKey, data);
+                _altFieldNewIndex = newIndex;
+                const listEl = document.getElementById('alt-field-list');
+                renderAltFieldList(listEl, saveKey, config, targetTextarea);
+            };
+        }
+    } else if (hasMatch) {
+        statusEl.className = 'alt-field-status alt-field-status--ok';
+        statusEl.innerHTML = `
+            <i class="fa-solid fa-check-circle"></i>
+            <span>Current ${config.label} matches a saved version.</span>`;
+    } else {
+        statusEl.className = 'alt-field-status';
+        statusEl.innerHTML = '';
+    }
+}
+
+/**
+ * Lightweight refresh of the active-field highlight + Use-button state on every
+ * alt entry, comparing each saved entry's content against the live field value.
+ * Avoids a full re-render (which would drop focus while editing an entry).
+ * @param {HTMLElement} listEl
+ * @param {string} saveKey
+ * @param {HTMLTextAreaElement|null} targetTextarea
+ */
+function refreshAltFieldActiveIndicators(listEl, saveKey, targetTextarea) {
+    if (!listEl) return;
+    const currentContent = (targetTextarea?.value || '').trim();
+    const entries = getAltFieldData(saveKey);
+    listEl.querySelectorAll('.alt-entry').forEach((item, i) => {
+        const entryContent = ((entries[i]?.content) || '').trim();
+        const isActive = entryContent === currentContent;
+        item.classList.toggle('active-field', isActive);
+        const useBtn = item.querySelector('.alt-use-btn');
+        if (useBtn) {
+            useBtn.classList.toggle('active', isActive);
+            useBtn.title = isActive ? 'Already in use' : 'Load into editor';
+            const span = useBtn.querySelector('span');
+            const icon = useBtn.querySelector('i');
+            if (span) span.textContent = isActive ? 'In Use' : 'Use';
+            if (icon) icon.className = isActive ? 'fa-solid fa-check' : 'fa-solid fa-arrow-up';
+        }
+    });
+}
+
+function renderAltFieldList(listEl, saveKey, config, targetTextarea) {
+    const entries = getAltFieldData(saveKey);
+    renderAltFieldStatus(saveKey, config, targetTextarea);
+    if (!entries.length) {
+        listEl.innerHTML = `<div class="justifyLeft" style="padding: 12px;"><small class="opacity50p">No alternate versions saved yet. Click <strong>Add New</strong> to save the current field content as the first alternate.</small></div>`;
+        return;
+    }
+
+    const currentContent = (targetTextarea?.value || '').trim();
+
+    listEl.innerHTML = entries.map((entry, i) => {
+        const entryContent = (entry.content || '').trim();
+        // A freshly added entry matches the field by definition; don't flag it
+        // "In Use" — only the entry the field was actually loaded from should.
+        const isActive = (i === _altFieldNewIndex) ? false : (entryContent === currentContent);
+        return `
+        <div class="alt-entry${isActive ? ' active-field' : ''}" data-index="${i}">
+            <div class="alt-entry-top-row">
+                <input type="text" class="text_pole alt-entry-title" value="${entry.title?.replace(/"/g, '&quot;') || ''}" maxlength="50" placeholder="Title...">
+                <span class="alt-entry-tokens" data-token-idx="${i}">...</span>
+                <button type="button" class="alt-use-btn${isActive ? ' active' : ''}" data-index="${i}" title="${isActive ? 'Already in use' : 'Load into editor'}">
+                    <i class="fa-solid fa-${isActive ? 'check' : 'arrow-up'}"></i>
+                    <span>${isActive ? 'In Use' : 'Use'}</span>
+                </button>
+                <button type="button" class="alt-delete-btn" data-index="${i}" title="Delete this alternate">
+                    <i class="fa-solid fa-trash"></i><span>Delete</span>
+                </button>
+            </div>
+            <textarea class="text_pole alt-entry-content" rows="6" data-index="${i}">${entry.content || ''}</textarea>
+        </div>`;
+    }).join('');
+
+    entries.forEach((entry, i) => {
+        const tokenEl = listEl.querySelector(`.alt-entry-tokens[data-token-idx="${i}"]`);
+        if (!tokenEl) return;
+        if (!entry.content) { tokenEl.textContent = '0 tok'; return; }
+        // Fix 5: robust token counting — guard the call and degrade gracefully.
+        const ctx = getSTContext();
+        if (ctx && typeof ctx.getTokenCountAsync === 'function') {
+            Promise.resolve()
+                .then(() => ctx.getTokenCountAsync(entry.content))
+                .then(count => { tokenEl.textContent = (count != null && !isNaN(count)) ? `${count} tok` : '—'; })
+                .catch(() => { tokenEl.textContent = '—'; });
+        } else {
+            tokenEl.textContent = Math.ceil((entry.content || '').length / 4) + ' tok';
+        }
+    });
+
+    listEl.querySelectorAll('.alt-use-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.classList.contains('active')) return;
+            const idx = parseInt(btn.dataset.index);
+            const data = getAltFieldData(saveKey);
+            if (!data[idx] || !targetTextarea) return;
+            // Fix 4: warn before overwriting an unsaved field edit (mirrors upstream).
+            const currentContent = (targetTextarea.value || '').trim();
+            const hasUnsavedChanges = currentContent && !data.some(e => (e.content || '').trim() === currentContent);
+            if (hasUnsavedChanges) {
+                const ok = confirm(`Your current ${config.label} has unsaved changes. Switch to this ${config.label} anyway?`);
+                if (!ok) return;
+            }
+            targetTextarea.value = data[idx].content || '';
+            targetTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+            renderAltFieldList(listEl, saveKey, config, targetTextarea);
+            showToast?.(`Loaded "${data[idx].title || 'alternate'}" into the field`, 'success');
+        });
+    });
+
+    listEl.querySelectorAll('.alt-delete-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const idx = parseInt(btn.dataset.index);
+            const data = getAltFieldData(saveKey);
+            if (!confirm(`Delete "${data[idx]?.title || 'this alternate'}"?`)) return;
+            data.splice(idx, 1);
+            saveAltFieldData(saveKey, data);
+            renderAltFieldList(listEl, saveKey, config, targetTextarea);
+        });
+    });
+
+    let saveTimeout;
+    function debouncedSave() {
+        clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(() => {
+            const items = listEl.querySelectorAll('.alt-entry');
+            const data = getAltFieldData(saveKey);
+            items.forEach((item, i) => {
+                if (data[i]) {
+                    data[i].title = item.querySelector('.alt-entry-title')?.value || data[i].title;
+                    data[i].content = item.querySelector('.alt-entry-content')?.value || data[i].content;
+                }
+            });
+            saveAltFieldData(saveKey, data);
+        }, 500);
+    }
+
+    listEl.querySelectorAll('.alt-entry-title, .alt-entry-content').forEach(el => {
+        el.addEventListener('input', debouncedSave);
+    });
+
+    // Consumed: the just-added entry has been rendered; clear so subsequent
+    // renders (Use / edit / live monitor) fall back to content-match logic.
+    _altFieldNewIndex = -1;
 }
 
 // =====================================================
@@ -12219,13 +13829,13 @@ function populateInfoTab(char) {
     const { embeddedUrls: sidebarEmbeddedUrls, lorebookUrls: sidebarLorebookUrls } = findCharacterMediaUrls(char, { split: true });
     
     // Get lorebook info
-    const characterBook = char.character_book || char.data?.character_book;
+    const characterBook = (char.data?.character_book ?? char.character_book) ?? null;
     const lorebookEntries = characterBook?.entries?.length || 0;
     // Linked external world file (primary link) lives on the card at data.extensions.world.
     const linkedWorld = char.data?.extensions?.world || '';
     
     // Get alternate greetings count
-    const altGreetings = char.alternate_greetings || char.data?.alternate_greetings || [];
+    const altGreetings = (char.data?.alternate_greetings ?? char.alternate_greetings) ?? [];
     
     // Build HTML
     let html = '';
@@ -13431,6 +15041,7 @@ function collectEditValues() {
         post_history_instructions: document.getElementById('editPostHistoryInstructions').value,
         creator_notes: document.getElementById('editCreatorNotes').value,
         alternate_greetings: getAltGreetingsFromEditor(),
+        alternate_greetings_names: getAltGreetingNamesFromEditor(),
         character_book: getCharacterBookFromEditor()
     };
 }
@@ -13454,6 +15065,7 @@ function generateChangesDiff(original, current) {
         post_history_instructions: 'Post-History Instructions',
         creator_notes: "Creator's Notes",
         alternate_greetings: 'Alternate Greetings',
+        alternate_greetings_names: 'Alternate Greeting Names',
         character_book: 'Embedded Lorebook'
     };
     
@@ -13510,6 +15122,22 @@ function generateChangesDiff(original, current) {
             continue;
         }
         
+        // Handle alternate greetings names array comparison
+        if (key === 'alternate_greetings_names') {
+            const oldNorm = (Array.isArray(oldVal) ? oldVal : []).map(s => String(s ?? ''));
+            const newNorm = (Array.isArray(newVal) ? newVal : []).map(s => String(s ?? ''));
+            const oldStr = JSON.stringify(oldNorm);
+            const newStr = JSON.stringify(newNorm);
+            if (oldStr !== newStr) {
+                changes.push({
+                    field: fieldLabels[key],
+                    old: oldNorm.map((n, i) => `#${i+1}: ${n || '(unnamed)'}`).join('\n') || '(none)',
+                    new: newNorm.map((n, i) => `#${i+1}: ${n || '(unnamed)'}`).join('\n') || '(none)'
+                });
+            }
+            continue;
+        }
+
         // Handle character_book comparison - compare only the meaningful fields
         if (key === 'character_book') {
             const normalizeBook = (book) => {
@@ -13705,18 +15333,12 @@ function truncateText(text, maxLength) {
     return text.substring(0, maxLength) + '...';
 }
 
-// Show confirmation modal with diff
-function showSaveConfirmation() {
-    if (!activeChar) return;
-    
+function prepareCharacterSave() {
+    if (!activeChar) return null;
+
     const currentValues = collectEditValues();
     const changes = generateChangesDiff(originalValues, currentValues);
     const hasAvatarChange = !!pendingAvatarFile;
-    
-    if (changes.length === 0 && !hasAvatarChange) {
-        showToast("No changes detected", "info");
-        return;
-    }
 
     // Tagline and listing name as leaf writes so the namespace's sibling fields (id, full_path, linkedAt) survive the spread.
     const activeNs = window.ProviderRegistry?.getActiveTaglineNamespace?.(activeChar) ?? 'cl';
@@ -13734,10 +15356,26 @@ function showSaveConfirmation() {
         character_version: currentValues.character_version,
         tags: currentValues.tagsArray,
         alternate_greetings: currentValues.alternate_greetings,
+        ['extensions.alternate_greetings_names']: currentValues.alternate_greetings_names,
         character_book: currentValues.character_book,
         [`extensions.${activeNs}.tagline`]: currentValues.tagline ?? '',
         [`extensions.${activeNs}.pageName`]: currentValues.listingName ?? '',
     };
+
+    return { changes, hasAvatarChange };
+}
+
+// Show confirmation modal with diff
+function showSaveConfirmation() {
+    const prepared = prepareCharacterSave();
+    if (!prepared) return;
+    const { changes, hasAvatarChange } = prepared;
+
+    if (changes.length === 0 && !hasAvatarChange) {
+        pendingUpdates = null;
+        showToast("No changes detected", "info");
+        return;
+    }
     
     // Build diff HTML
     const diffContainer = document.getElementById('changesDiff');
@@ -13764,37 +15402,37 @@ function showSaveConfirmation() {
 
 // Actually perform the save
 async function performSave() {
-    if (!activeChar || !pendingUpdates) return;
-
-    if (activeChar._slim) {
-        await hydrateCharacter(activeChar);
-        if (activeChar._slim) { showToast('Card data still loading, please try again', 'warning'); return; }
-    }
-
-    // Re-entrancy guard: a double-tap Confirm Save must not run two concurrent snapshot+write+upload passes.
-    if (_saveInProgress) return;
+    if (!activeChar || !pendingUpdates || _saveInProgress) return;
+    // Bind the entire transaction before its first await. Escape/navigation can
+    // open another card while hydration, snapshots or the server write is pending.
     _saveInProgress = true;
-
-    const hasAvatarChange = !!pendingAvatarFile;
-
-    // Auto-snapshot before edit (non-blocking - don't let snapshot failure block the save).
-    // When the avatar is also being replaced, embed the OLD image bytes in the snapshot
-    // so the version history can show/restore the original card image even after overwrite.
-    if (window.autoSnapshotBeforeChange) {
-        try { await window.autoSnapshotBeforeChange(activeChar, 'edit', { embedAvatar: hasAvatarChange }); } catch (_) {}
-    }
-
-    // Capture old name before the write so the gallery folder rename has the pre-write value.
+    let saveSucceeded = false;
+    const saveChar = activeChar;
+    const updates = pendingUpdates;
+    const savedValues = collectEditValues();
+    const avatarFile = pendingAvatarFile;
+    const saveGeneration = _modalOpenGen;
+    const isCurrentSave = () => activeChar?.avatar === saveChar.avatar && _modalOpenGen === saveGeneration;
     const oldName = originalValues.name;
-    const newName = pendingUpdates.name;
+    const newName = updates.name;
     const nameChanged = oldName && newName && oldName !== newName;
-    const galleryId = getCharacterGalleryId(activeChar);
+    const hasAvatarChange = !!avatarFile;
 
     try {
+        if (saveChar._slim) {
+            await hydrateCharacter(saveChar);
+            if (saveChar._slim) { showToast('Card data still loading, please try again', 'warning'); return; }
+        }
+        // Keep the old image in the snapshot when it is also being replaced.
+        if (window.autoSnapshotBeforeChange) {
+            try { await window.autoSnapshotBeforeChange(saveChar, 'edit', { embedAvatar: hasAvatarChange }); } catch (_) {}
+        }
+        const galleryId = getCharacterGalleryId(saveChar);
         // writeCardFields does the card write; performSave keeps the non-generic orchestration (avatar upload, gallery rename, date bump, refresh, notify).
-        const writeResult = await writeCardFields(activeChar, pendingUpdates);
+        const writeResult = await writeCardFields(saveChar, updates);
 
         if (writeResult.ok) {
+            let avatarSaved = !hasAvatarChange;
             // Upload replacement avatar (after fields succeeded). edit-avatar reads existing
             // card JSON from the PNG and re-embeds it into the new image, so all fields,
             // extensions, gallery_id, version_uid, chats, and the filename are preserved.
@@ -13803,8 +15441,8 @@ async function performSave() {
                     const formData = new FormData();
                     // ST's edit-avatar re-encodes as PNG and re-embeds existing card JSON,
                     // so we always send with .png filename regardless of source format.
-                    formData.append('avatar', new File([pendingAvatarFile], 'avatar.png', { type: pendingAvatarFile.type || 'image/png' }));
-                    formData.append('avatar_url', activeChar.avatar);
+                    formData.append('avatar', new File([avatarFile], 'avatar.png', { type: avatarFile.type || 'image/png' }));
+                    formData.append('avatar_url', saveChar.avatar);
                     const csrfToken = getCSRFToken();
                     const avatarResp = await fetch('/api/characters/edit-avatar', {
                         method: 'POST',
@@ -13815,6 +15453,7 @@ async function performSave() {
                         const err = await avatarResp.text().catch(() => '');
                         throw new Error(`Avatar upload failed (${avatarResp.status}): ${err}`);
                     }
+                    avatarSaved = true;
                 } catch (avatarErr) {
                     console.error('[Edit] Avatar upload failed:', avatarErr);
                     showToast(`Card saved, but image update failed: ${avatarErr.message}`, 'warning');
@@ -13822,55 +15461,63 @@ async function performSave() {
                 }
             }
 
-            showToast("Character saved successfully!", "success");
+            if (avatarSaved) showToast("Character saved successfully!", "success");
 
             // Close confirmation immediately so it doesn't wait on folder rename / grid refresh
-            document.getElementById('confirmSaveModal').classList.add('hidden');
+            if (isCurrentSave() && pendingUpdates === updates) document.getElementById('confirmSaveModal').classList.add('hidden');
 
             // Handle gallery folder rename if name changed and character has unique gallery folder
             if (nameChanged && galleryId && getSetting('uniqueGalleryFolders')) {
-                await handleGalleryFolderRename(activeChar, oldName, newName, galleryId);
+                await handleGalleryFolderRename(saveChar, oldName, newName, galleryId);
             }
 
             // Re-point activeChar to the canonical array entry in case writeCardFields received a different ref.
-            const charIndex = allCharacters.findIndex(c => c.avatar === activeChar.avatar);
-            if (charIndex !== -1 && allCharacters[charIndex] !== activeChar) {
+            const charIndex = allCharacters.findIndex(c => c.avatar === saveChar.avatar);
+            if (isCurrentSave() && charIndex !== -1 && allCharacters[charIndex] !== activeChar) {
                 activeChar = allCharacters[charIndex];
             }
 
             // Update last modified timestamp locally so sort by "Last Modified" reflects the change immediately.
             const nowMs = Date.now();
-            activeChar.date_added = nowMs;
-            if (activeChar._meta) activeChar._meta.date_added = nowMs;
+            saveChar.date_added = nowMs;
+            if (saveChar._meta) saveChar._meta.date_added = nowMs;
             if (charIndex !== -1) {
                 allCharacters[charIndex].date_added = nowMs;
                 if (allCharacters[charIndex]._meta) allCharacters[charIndex]._meta.date_added = nowMs;
             }
 
-            // Update original values to reflect saved state
-            originalValues = collectEditValues();
-
-            // Refresh the modal display to show saved changes
-            refreshModalDisplay();
+            // Inputs can change after the confirmation is dismissed during a save.
+            // Only the submitted values become the baseline; later edits stay dirty.
+            let unchangedSinceSave = false;
+            if (isCurrentSave()) {
+                unchangedSinceSave = generateChangesDiff(savedValues, collectEditValues()).length === 0
+                    && pendingAvatarFile === avatarFile && avatarSaved;
+                originalValues = savedValues;
+                originalRawData = {
+                    altGreetings: [...(updates.alternate_greetings || [])],
+                    characterBook: updates.character_book ? JSON.parse(JSON.stringify(updates.character_book)) : null,
+                };
+                if (unchangedSinceSave) refreshModalDisplay();
+            }
 
             // Cache-bust avatar URLs after image swap so the modal hero and grid cards
             // all fetch the new PNG without needing F5.
-            if (hasAvatarChange) {
-                bumpAvatarCacheBust(activeChar.avatar);
-                const newUrl = getCharacterAvatarUrl(activeChar.avatar);
+            if (hasAvatarChange && avatarSaved) {
+                bumpAvatarCacheBust(saveChar.avatar);
+                const newUrl = getCharacterAvatarUrl(saveChar.avatar);
                 const heroImg = document.getElementById('modalImage');
-                if (heroImg) heroImg.src = newUrl;
+                if (isCurrentSave() && pendingAvatarFile === avatarFile && heroImg) heroImg.src = newUrl;
                 const headerAvatar = document.querySelector('#charModal .mobile-header-avatar');
-                if (headerAvatar) headerAvatar.src = getCharacterAvatarStThumbUrl(activeChar.avatar);
+                if (isCurrentSave() && pendingAvatarFile === avatarFile && headerAvatar) headerAvatar.src = getCharacterAvatarStThumbUrl(saveChar.avatar);
                 // Repaint the edited card's grid image now, in case the re-render below reuses the node.
-                const gridUrl = gridUsesThumbnails() ? getCharacterAvatarThumbUrl(activeChar.avatar) : getCharacterAvatarUrl(activeChar.avatar);
-                const cardImg = findCardElement(activeChar.avatar)?.querySelector('.card-image');
+                const gridUrl = gridUsesThumbnails() ? getCharacterAvatarThumbUrl(saveChar.avatar) : getCharacterAvatarUrl(saveChar.avatar);
+                const cardImg = findCardElement(saveChar.avatar)?.querySelector('.card-image');
                 if (cardImg) cardImg.src = gridUrl;
-                clearPendingAvatar();
+                if (isCurrentSave() && pendingAvatarFile === avatarFile) clearPendingAvatar();
             }
             
             // Listing name + tagline feed the search keys (CL-side state the card write doesnt touch), so recompute them before the grid re-renders below.
-            for (const c of [activeChar, charIndex !== -1 ? allCharacters[charIndex] : null].filter(Boolean)) {
+            for (const c of [saveChar, charIndex !== -1 ? allCharacters[charIndex] : null].filter(Boolean)) {
                 const ln = getListingNameFromExtensions(c);
                 c._lowerListingName = ln ? ln.toLowerCase() : '';
                 c._lowerTagline = getDisplayTagline(c).toLowerCase();
@@ -13880,16 +15527,17 @@ async function performSave() {
             performSearch();
             
             // Lock editing and clean up
-            setEditLock(true);
-            pendingUpdates = null;
+            if (isCurrentSave() && unchangedSinceSave) setEditLock(!getSetting('alwaysEditEnabled'));
+            if (pendingUpdates === updates) pendingUpdates = null;
 
             // Tell ST to re-read the character so open chats pick up the edits
             // without requiring a tab refresh. Best-effort, non-blocking.
-            notifySTCharacterEdited(activeChar.avatar);
+            notifySTCharacterEdited(saveChar.avatar);
 
             // Fetch from server for full sync (in background)
             // forceRefresh avoids stale opener data overwriting recent changes
             fetchCharacters(true);
+            saveSucceeded = avatarSaved && unchangedSinceSave && isCurrentSave();
         } else {
             const err = writeResult.response ? await writeResult.response.text().catch(() => '') : '';
             showToast("Error saving: " + (err || 'unknown'), "error");
@@ -13899,6 +15547,7 @@ async function performSave() {
     } finally {
         _saveInProgress = false;
     }
+    return saveSucceeded;
 }
 
 // Heavy Details-tab fields: description, first message, alt greetings, embedded lorebook,
@@ -13917,7 +15566,7 @@ function paintModalHeavyContent(char, creatorNotes, gen) {
     document.getElementById('modalFirstMes').innerHTML = formatRichText(firstMes, char.name);
 
     // Alternate Greetings
-    const altGreetings = char.alternate_greetings || (char.data ? char.data.alternate_greetings : []) || [];
+    const altGreetings = (char.data?.alternate_greetings ?? char.alternate_greetings) ?? [];
     const altBox = document.getElementById('modalAltGreetingsBox');
 
     // Store raw content for fullscreen expand feature
@@ -13926,9 +15575,11 @@ function paintModalHeavyContent(char, creatorNotes, gen) {
     if (altBox) {
         if (altGreetings && altGreetings.length > 0) {
             document.getElementById('altGreetingsCount').innerText = altGreetings.length;
-            const listHTML = altGreetings.map((g, i) =>
-                `<div style="margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px dashed rgba(255,255,255,0.1);"><strong style="color:var(--accent);">#${i+1}:</strong> <span>${formatRichText((g || '').trim(), char.name)}</span></div>`
-            ).join('');
+            const altNames = char.data?.extensions?.alternate_greetings_names ?? [];
+            const listHTML = altGreetings.map((g, i) => {
+                const gName = (altNames[i] || '').trim();
+                return `<div style="margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px dashed rgba(255,255,255,0.1);"><strong style="color:var(--accent);">#${i+1}${gName ? ` (${escapeHtml(gName)})` : ''}:</strong> <span>${formatRichText((g || '').trim(), char.name)}</span></div>`;
+            }).join('');
             document.getElementById('modalAltGreetings').innerHTML = listHTML;
             altBox.style.display = 'block';
         } else {
@@ -13943,7 +15594,7 @@ function paintModalHeavyContent(char, creatorNotes, gen) {
     applyMediaLocalizationToModal(char, desc, firstMes, altGreetings, creatorNotes, gen);
 
     // Embedded Lorebook
-    const characterBook = char.character_book || (char.data ? char.data.character_book : null);
+    const characterBook = (char.data?.character_book ?? char.character_book) ?? null;
     const lorebookBox = document.getElementById('modalLorebookBox');
 
     if (lorebookBox) {
@@ -14158,6 +15809,16 @@ function setEditLock(locked) {
         if (tagInputWrapper) tagInputWrapper.classList.add('hidden');
         if (tagsContainer) tagsContainer.classList.remove('editable');
         if (activeChar) renderSidebarTags(getCurrentTagsArray(), false);
+
+        // Lock nickname editor
+        document.querySelectorAll('#cl-nickname-section .nickname-input, #cl-nickname-section .nickname-save-btn, #cl-nickname-section .nickname-clear-btn, #cl-nickname-section .context-btn').forEach(el => {
+            el.disabled = true;
+            el.style.pointerEvents = 'none';
+            el.style.opacity = '0.5';
+        });
+
+        // Hide Alt. field buttons when locked
+        document.querySelectorAll('.alt-field-btn').forEach(btn => btn.classList.add('hidden'));
     } else {
         lockHeader?.classList.add('unlocked');
         if (lockStatus) {
@@ -14212,6 +15873,16 @@ function setEditLock(locked) {
         if (tagInputWrapper) tagInputWrapper.classList.remove('hidden');
         if (tagsContainer) tagsContainer.classList.add('editable');
         renderSidebarTags(getCurrentTagsArray(), true);
+
+        // Unlock nickname editor
+        document.querySelectorAll('#cl-nickname-section .nickname-input, #cl-nickname-section .nickname-save-btn, #cl-nickname-section .nickname-clear-btn, #cl-nickname-section .context-btn').forEach(el => {
+            el.disabled = false;
+            el.style.pointerEvents = '';
+            el.style.opacity = '';
+        });
+
+        // Show Alt. field buttons when unlocked
+        document.querySelectorAll('.alt-field-btn').forEach(btn => btn.classList.remove('hidden'));
     }
 }
 
@@ -14237,7 +15908,7 @@ function cancelEditing() {
     _editTagsArray = [...(originalValues.tagsArray || [])];
     
     // Restore alternate greetings from raw data
-    populateAltGreetingsEditor(originalRawData.altGreetings || []);
+    populateAltGreetingsEditor(originalRawData.altGreetings || [], originalRawData.altGreetingNames || []);
     
     // Restore lorebook from raw data
     populateLorebookEditor(originalRawData.characterBook);
@@ -14246,7 +15917,7 @@ function cancelEditing() {
     clearPendingAvatar();
     
     // Re-lock (this also re-renders sidebar tags via setEditLock)
-    setEditLock(true);
+    setEditLock(!getSetting('alwaysEditEnabled'));
     showToast("Changes discarded", "info");
 }
 
@@ -14766,8 +16437,8 @@ function initSectionExpandButtons() {
             const worldName = activeChar?.data?.extensions?.world;
             if (!worldName) return;
             if (isCharModalDirty()) {
-                const ok = await confirmDiscardCharModalEdits();
-                if (!ok) return;
+                const action = await resolveUnsavedCharModalEdits();
+                if (action === 'cancel') return;
             }
             closeModal();
             window.openLorebookManager?.(worldName);
@@ -14851,6 +16522,11 @@ async function unlinkLorebookFromCharacter() {
     if (!ok) return;
     const success = await applyCardFieldUpdates(activeChar.avatar, { 'extensions.world': '' }, { awaitNotify: true });
     if (!success) { showToast('Failed to unlink lorebook', 'error'); return; }
+    // Update the in-memory activeChar so the UI refresh below sees the new state.
+    if (activeChar.data) {
+        if (!activeChar.data.extensions) activeChar.data.extensions = {};
+        activeChar.data.extensions.world = '';
+    }
     // Refresh the Edit-tab buttons and the detail-modal Linked Lorebook box.
     populateLorebookEditor(activeChar.data?.character_book || activeChar.character_book);
     populateLinkedLorebookBox(activeChar);
@@ -14942,7 +16618,14 @@ async function linkLorebookToCharacter(fileId) {
     if (current === fileId) { closeLinkLorebookPicker(); return; }
     const success = await applyCardFieldUpdates(activeChar.avatar, { 'extensions.world': fileId }, { awaitNotify: true });
     if (!success) { showToast('Failed to link lorebook', 'error'); return; }
+    // Update the in-memory activeChar so the UI refresh below sees the new state.
+    if (activeChar.data) {
+        if (!activeChar.data.extensions) activeChar.data.extensions = {};
+        activeChar.data.extensions.world = fileId;
+    }
     closeLinkLorebookPicker();
+    // Invalidate the render cache for the new world so entries are fetched fresh.
+    window.invalidateLinkedWorldRenderCache?.(fileId);
     populateLorebookEditor(activeChar.data?.character_book || activeChar.character_book);
     populateLinkedLorebookBox(activeChar);
     showToast(`Linked "${fileId}".`, 'success', 5000);
@@ -15051,17 +16734,21 @@ function openGreetingsModal() {
     
     // Collect current alternate greetings
     const altGreetings = [];
+    const altNames = [];
     if (altGreetingsContainer) {
-        const altInputs = altGreetingsContainer.querySelectorAll('.alt-greeting-input');
-        altInputs.forEach(input => {
-            altGreetings.push(input.value);
+        const altItems = altGreetingsContainer.querySelectorAll('.alt-greeting-item');
+        altItems.forEach(item => {
+            const textarea = item.querySelector('.alt-greeting-input');
+            const nameInput = item.querySelector('.alt-greeting-name');
+            altGreetings.push(textarea ? textarea.value : '');
+            altNames.push(nameInput ? nameInput.value : '');
         });
     }
     
     // Build modal HTML
     let altGreetingsHtml = '';
     altGreetings.forEach((greeting, idx) => {
-        const previewText = greeting ? greeting.substring(0, 100).replace(/\n/g, ' ') + (greeting.length > 100 ? '...' : '') : 'Empty greeting';
+        const nameVal = (altNames[idx] || '').trim();
         altGreetingsHtml += `
             <div class="expanded-greeting-item" data-index="${idx}">
                 <div class="expanded-greeting-header">
@@ -15069,7 +16756,7 @@ function openGreetingsModal() {
                         <i class="fa-solid fa-chevron-down"></i>
                     </button>
                     <span class="expanded-greeting-num">#${idx + 1}</span>
-                    <span class="expanded-greeting-preview">${escapeHtml(previewText)}</span>
+                    <input type="text" class="glass-input expanded-greeting-name" placeholder="Greeting name (optional)" value="${escapeHtml(nameVal)}" style="flex: 1; min-width: 0; height: 30px; padding: 2px 10px; font-size: var(--font-sm);" />
                     <button type="button" class="expanded-greeting-delete" title="Delete this greeting">
                         <i class="fa-solid fa-trash"></i>
                     </button>
@@ -15187,7 +16874,7 @@ function openGreetingsModal() {
                         <i class="fa-solid fa-chevron-down"></i>
                     </button>
                     <span class="expanded-greeting-num">#${idx + 1}</span>
-                    <span class="expanded-greeting-preview">Empty greeting</span>
+                    <input type="text" class="glass-input expanded-greeting-name" placeholder="Greeting name (optional)" style="flex: 1; min-width: 0; height: 30px; padding: 2px 10px; font-size: var(--font-sm);" />
                     <button type="button" class="expanded-greeting-delete" title="Delete this greeting">
                         <i class="fa-solid fa-trash"></i>
                     </button>
@@ -15293,9 +16980,13 @@ function openGreetingsModal() {
         // Collect and update alternate greetings
         const expandedContainer = document.getElementById('expandedAltGreetingsContainer');
         const expandedGreetings = [];
+        const expandedNames = [];
         if (expandedContainer) {
-            expandedContainer.querySelectorAll('.expanded-greeting-textarea').forEach(textarea => {
-                expandedGreetings.push(textarea.value);
+            expandedContainer.querySelectorAll('.expanded-greeting-item').forEach(item => {
+                const textarea = item.querySelector('.expanded-greeting-textarea');
+                const nameInput = item.querySelector('.expanded-greeting-name');
+                expandedGreetings.push(textarea ? textarea.value : '');
+                expandedNames.push(nameInput ? nameInput.value : '');
             });
         }
         
@@ -15304,7 +16995,7 @@ function openGreetingsModal() {
         if (altGreetingsContainerCurrent) {
             altGreetingsContainerCurrent.innerHTML = '';
             expandedGreetings.forEach((greeting, idx) => {
-                addAltGreetingField(altGreetingsContainerCurrent, greeting, idx);
+                addAltGreetingField(altGreetingsContainerCurrent, greeting, idx, expandedNames[idx] || '');
             });
         }
         
@@ -15765,11 +17456,11 @@ function openExpandedFieldEditor(fieldId, fieldLabel) {
     };
     
     document.getElementById('expandFieldClose').onclick = closeExpandModal;
-    
+
     // Prevent accidental closure of the expanded field editor via backdrop click.
     // Clicking outside the editor can happen unintentionally while selecting or dragging text,
     // causing unapplied changes to be lost. The editor can still be closed using the close button or Apply.
-    
+
     // expandModal.onclick = (e) => { if (e.target === expandModal) closeExpandModal(); };
     
     // Save/Apply handler
@@ -15885,7 +17576,7 @@ function openBrowseExpandedView(sectionId, label, iconClass) {
                     </div>
                 </div>
                 <div class="browse-expand-body">
-                    <iframe id="chubExpandIframe" sandbox="allow-same-origin"></iframe>
+                    <iframe id="chubExpandIframe" sandbox="allow-same-origin allow-scripts"></iframe>
                 </div>
             </div>
         </div>
@@ -16828,13 +18519,14 @@ function performSearch() {
             if (!matchesSearch && useAuthor && c._lowerCreator.includes(query)) matchesSearch = true;
             if (!matchesSearch && useNotes && (c._lowerNotes || '').includes(query)) matchesSearch = true;
             if (!matchesSearch && useTagline && (c._lowerTagline || '').includes(query)) matchesSearch = true;
+            if (!matchesSearch && window.LocalQuality?.matches(c, query)) matchesSearch = true;
         }
 
         // 2. Tag Filter Logic - Tri-state: include, exclude, neutral
         //    Include mode: 'any' = OR (has at least one), 'all' = AND (has every one)
         //    Exclude mode: 'any' = reject if has any, 'all' = reject only if has all
         if (activeTagFilters.size > 0) {
-             const charTags = getTags(c);
+             const charTags = getFilterableTags(c);
 
              if (excludedTags.length > 0) {
                  const hasExcluded = tagExcludeMode === 'all'
@@ -17338,8 +19030,15 @@ function setupEventListeners() {
     // Sort - delegate to performSearch so there is ONE sort+render codepath.
     // This eliminates the dual-sort bug where the sort handler and performSearch
     // could produce different results from stale/divergent data.
-    on('sortSelect', 'change', (e) => {
+    on('sortSelect', 'change', async (e) => {
         if (e?.target?.value === 'random') reshuffleRandomSort();
+        // Chat count sorts need async pre-loading — fetch counts then re-render.
+        if (e?.target?.value === 'chats_most' || e?.target?.value === 'chats_least') {
+            if (_chatCountCache.size === 0 && !_chatCountLoading) {
+                showToast('Loading chat counts...', 'info', 3000);
+                await ensureChatCountsLoaded();
+            }
+        }
         performSearch();
     });
     
@@ -17430,6 +19129,29 @@ function setupEventListeners() {
         e.preventDefault();
         navigateModal(e.key === 'ArrowLeft' ? -1 : 1);
     });
+
+    // Auto-save provider-link metadata (tagline + listingName) on edit so dirty state never blocks nav.
+    const _autoSaveProviderMeta = async () => {
+        if (isEditLocked || !activeChar) return;
+        const tagline = document.getElementById('editTagline')?.value ?? '';
+        const listingName = document.getElementById('editListingName')?.value ?? '';
+        const activeNs = window.ProviderRegistry?.getActiveTaglineNamespace?.(activeChar) ?? 'cl';
+        const updates = {
+            [`extensions.${activeNs}.tagline`]: tagline,
+            [`extensions.${activeNs}.pageName`]: listingName,
+        };
+        const ok = await window.applyCardFieldUpdates(activeChar.avatar, updates);
+        if (ok) {
+            originalValues.tagline = tagline;
+            originalValues.listingName = listingName;
+            activeChar._lowerListingName = (listingName || '').toLowerCase();
+            activeChar._lowerTagline = getDisplayTagline(activeChar).toLowerCase();
+        }
+    };
+    const taglineInput = document.getElementById('editTagline');
+    const listingNameInput = document.getElementById('editListingName');
+    if (taglineInput) taglineInput.addEventListener('change', _autoSaveProviderMeta);
+    if (listingNameInput) listingNameInput.addEventListener('change', _autoSaveProviderMeta);
 
     // Tabs
     getTabButtons().forEach(btn => {
@@ -17596,20 +19318,28 @@ function setupEventListeners() {
 }
 
 // Alternate Greetings Editor Functions
-function populateAltGreetingsEditor(greetings) {
+function normalizeAltGreetingNames(raw, len) {
+    const arr = Array.isArray(raw) ? raw.map(s => String(s ?? '')) : [];
+    if (arr.length < len) arr.length = len;        // pad with empty strings
+    else if (arr.length > len) arr.length = len;   // truncate extras
+    return arr;
+}
+
+function populateAltGreetingsEditor(greetings, names) {
     const container = document.getElementById('altGreetingsEditContainer');
     if (!container) return;
     
     container.innerHTML = '';
     
+    const nameArr = Array.isArray(names) ? names : [];
     if (greetings && greetings.length > 0) {
         greetings.forEach((greeting, index) => {
-            addAltGreetingField(container, (greeting || '').trim(), index);
+            addAltGreetingField(container, (greeting || '').trim(), index, nameArr[index] || '');
         });
     }
 }
 
-function addAltGreetingField(container, value = '', index = null) {
+function addAltGreetingField(container, value = '', index = null, name = '') {
     if (!container) {
         container = document.getElementById('altGreetingsEditContainer');
     }
@@ -17623,8 +19353,11 @@ function addAltGreetingField(container, value = '', index = null) {
     
     wrapper.innerHTML = `
         <div style="display: flex; align-items: flex-start; gap: 8px;">
-            <span style="color: var(--accent); font-weight: bold; padding-top: 8px;">#${idx + 1}</span>
-            <textarea class="glass-input alt-greeting-input" rows="3" placeholder="Alternate greeting message..." style="flex: 1;"></textarea>
+            <span style="color: var(--accent); font-weight: bold; padding-top: 7px; line-height: 1;">#${idx + 1}</span>
+            <div style="display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0;">
+                <input type="text" class="glass-input alt-greeting-name" placeholder="Greeting name (optional)" style="height: 30px; padding: 2px 10px; font-size: var(--font-sm);" />
+                <textarea class="glass-input alt-greeting-input" rows="3" placeholder="Alternate greeting message..." style="width: 100%;"></textarea>
+            </div>
             <button type="button" class="remove-alt-greeting-btn" title="Remove this greeting">
                 <i class="fa-solid fa-trash"></i>
             </button>
@@ -17633,7 +19366,9 @@ function addAltGreetingField(container, value = '', index = null) {
     
     container.appendChild(wrapper);
     
-    // Set the textarea value directly (not via innerHTML) to ensure .value property is set
+    // Set values directly (not via innerHTML) to ensure .value reflects the model.
+    const nameInput = wrapper.querySelector('.alt-greeting-name');
+    if (nameInput) nameInput.value = name || '';
     const textarea = wrapper.querySelector('.alt-greeting-input');
     if (textarea && value) {
         textarea.value = value;
@@ -17675,6 +19410,27 @@ function getAltGreetingsFromEditor() {
     });
     
     return greetings;
+}
+
+// Collect names in lockstep with getAltGreetingsFromEditor(): only emit a name for
+// greetings that are non-empty, so the two arrays stay index-aligned.
+function getAltGreetingNamesFromEditor() {
+    const container = document.getElementById('altGreetingsEditContainer');
+    if (!container) return [];
+
+    const items = container.querySelectorAll('.alt-greeting-item');
+    const names = [];
+
+    items.forEach(item => {
+        const textarea = item.querySelector('.alt-greeting-input');
+        const nameInput = item.querySelector('.alt-greeting-name');
+        const greetingVal = textarea ? textarea.value : '';
+        if (greetingVal.trim()) {
+            names.push(nameInput ? nameInput.value : '');
+        }
+    });
+
+    return names;
 }
 
 // ==========================================
@@ -19136,6 +20892,8 @@ async function importLocalCharacter(file) {
         const importGalleryPageUrls = typeof window.findCharacterGalleryUrls === 'function'
             ? window.findCharacterGalleryUrls(cardData) : [];
         
+
+
         // Re-embed updated card data if enrichment or gallery_id changed it
         let pngToUpload = needsReembed ? embedCharacterDataInPng(arrayBuffer, cardData) : arrayBuffer;
         
@@ -19170,7 +20928,17 @@ async function importLocalCharacter(file) {
         if (result.error) {
             throw new Error('Import failed: Server returned error');
         }
-        
+
+        // Server-side content-hash dedup: {duplicate: true, duplicate_of: <id>}, no file_name.
+        // Previously fell through to the success path below and fabricated a fileName from the
+        // original upload's name even though nothing was written - reporting a fake success and,
+        // in a batch, throwing off later same-named files' dedup numbering.
+        if (result.duplicate) {
+            return { success: false, error: `Duplicate of an existing character (skipped)`, duplicate: true, duplicateOf: result.duplicate_of || null };
+        }
+
+        await window.importEmbeddedCardLorebook(result.file_name, cardData.data);
+
         return {
             success: true,
             fileName: ensurePngExt(result.file_name || file.name),
@@ -19807,10 +21575,18 @@ startImportBtn?.addEventListener('click', async () => {
         // Execute the import based on item shape (provider URL vs local/direct file)
         const result = item.provider
             ? await item.provider.importCharacter(item.identifier, null, {
+                sourceUrl: item.url, interactive: true,
+                signal: importAbortState.controller.signal, reusePanel: true,
                 // Slow imports (eg. janitorai hidden-definition recovery) narrate their phases
                 onProgress: (msg) => updateLogEntry(logEntry, `${displayName}: ${msg}`, 'pending'),
             })
             : await importLocalCharacter(item.file);
+
+        if (result.panelClosed) {
+            updateLogEntry(logEntry, `${displayName}: import cancelled`, 'warning');
+            wasCancelled = true;
+            break;
+        }
         
         // Check abort AFTER import completes (import itself is atomic — card was already uploaded)
         if (shouldStop()) {
@@ -19958,6 +21734,8 @@ startImportBtn?.addEventListener('click', async () => {
                     break;
                 }
             }
+        } else if (result.cancelled) {
+            updateLogEntry(logEntry, `${displayName}: skipped by user`, 'warning');
         } else {
             errorCount++;
             updateStats();
@@ -19971,6 +21749,9 @@ startImportBtn?.addEventListener('click', async () => {
     }
     
     // ==================== FINALIZE ====================
+    for (const provider of new Set(importItems.map(item => item.provider).filter(Boolean))) {
+        provider.finishImportBatch?.();
+    }
     
     // Log cancellation
     if (wasCancelled) {
@@ -20775,6 +22556,7 @@ async function searchProvidersForLink(name, creator) {
 async function linkToSearchResult(btn) {
     const resultEl = btn.closest('.provider-link-search-result');
     if (!resultEl || !activeChar) return;
+    const targetChar = activeChar;
     
     const fullPath = resultEl.dataset.fullpath;
     let resultId = resultEl.dataset.id;
@@ -20807,12 +22589,14 @@ async function linkToSearchResult(btn) {
             }
         }
         
-        await saveProviderLink(activeChar, provider, { id: resultId, fullPath, pageName });
+        await saveProviderLink(targetChar, provider, { id: resultId, fullPath, pageName });
         
         showToast(`Linked to ${fullPath} (${provider.name})`, 'success');
         
-        updateProviderLinkIndicator(activeChar);
-        hideModal('providerLinkModal');
+        if (activeChar === targetChar) {
+            updateProviderLinkIndicator(targetChar);
+            hideModal('providerLinkModal');
+        }
         
     } catch (error) {
         console.error('[LinkSearch] Link error:', error);
@@ -20829,6 +22613,7 @@ async function linkToSearchResult(btn) {
  */
 async function linkToProviderUrl(url) {
     if (!activeChar) return;
+    const targetChar = activeChar;
     
     const btn = document.getElementById('providerLinkUrlBtn');
     
@@ -20851,22 +22636,26 @@ async function linkToProviderUrl(url) {
     try {
         let resultId = null;
         let pageName = null;
+        let sourceKind = null;
         
         // Fetch metadata to get the project/numeric ID
         if (matchedProvider.fetchMetadata) {
-            const metadata = await matchedProvider.fetchMetadata(parsedPath);
+            const metadata = await matchedProvider.fetchMetadata(parsedPath, { sourceUrl: url });
             if (metadata) {
                 resultId = metadata.id;
                 pageName = matchedProvider.getListingName(metadata);
+                sourceKind = metadata.sourceKind || null;
             }
         }
         
-        await saveProviderLink(activeChar, matchedProvider, { id: resultId, fullPath: parsedPath, pageName });
+        await saveProviderLink(targetChar, matchedProvider, { id: resultId, fullPath: parsedPath, pageName, sourceKind, sourceUrl: url });
         
         showToast(`Linked to ${parsedPath} (${matchedProvider.name})`, 'success');
         
-        updateProviderLinkIndicator(activeChar);
-        hideModal('providerLinkModal');
+        if (activeChar === targetChar) {
+            updateProviderLinkIndicator(targetChar);
+            hideModal('providerLinkModal');
+        }
         
     } catch (error) {
         console.error('[LinkSearch] URL link error:', error);
@@ -20884,6 +22673,8 @@ async function linkToProviderUrl(url) {
  */
 async function unlinkFromProvider() {
     if (!activeChar) return;
+    const targetChar = activeChar;
+    const match = linkModalActiveProvider || window.ProviderRegistry?.getCharacterProvider(targetChar);
     
     const btn = document.getElementById('providerLinkUnlinkBtn');
     if (btn) {
@@ -20892,29 +22683,27 @@ async function unlinkFromProvider() {
     }
     
     try {
-        const match = linkModalActiveProvider || window.ProviderRegistry?.getCharacterProvider(activeChar);
         const provider = match?.provider;
         if (!provider) throw new Error('No provider found for this character');
+        await hydrateCharacter(targetChar);
+        if (!extensionsReady(targetChar)) throw new Error('Could not load the existing provider link');
 
         // Non-blocking auto-snapshot before unlink (destructive, restore is the only undo).
         if (window.autoSnapshotBeforeChange) {
-            try { await window.autoSnapshotBeforeChange(activeChar, 'unlink'); } catch (_) {}
+            try { await window.autoSnapshotBeforeChange(targetChar, 'unlink'); } catch (_) {}
         }
 
         // Capture provider display metadata before setLinkInfo wipes it, so it survives as CL-owned fallback.
-        const provTagline = activeChar.data?.extensions?.[provider.id]?.tagline;
-        const provPageName = activeChar.data?.extensions?.[provider.id]?.pageName;
-
-        // Drop the provider namespace in-memory so reads see unlinked state before the round-trip completes.
-        provider.setLinkInfo(activeChar, null);
-        const charInArray = allCharacters.find(c => c.avatar === activeChar.avatar);
-        if (charInArray && charInArray !== activeChar) {
-            provider.setLinkInfo(charInArray, null);
-        }
+        const provTagline = targetChar.data?.extensions?.[provider.id]?.tagline;
+        const provPageName = targetChar.data?.extensions?.[provider.id]?.pageName;
+        const charInArray = allCharacters.find(c => c.avatar === targetChar.avatar);
 
         // Sentinel-delete the provider namespace; migrate display metadata into cl only where cl is empty (dont clobber user values).
-        const existingCl = activeChar.data?.extensions?.cl;
+        const existingCl = targetChar.data?.extensions?.cl;
         const updates = { [`extensions.${provider.id}`]: ST_UNSET_SENTINEL };
+        for (const namespace of provider.getLegacyLinkNamespaces?.(activeChar) || []) {
+            updates[`extensions.${namespace}`] = ST_UNSET_SENTINEL;
+        }
         if (provTagline && !(existingCl && 'tagline' in existingCl)) {
             updates['extensions.cl.tagline'] = provTagline;
         }
@@ -20922,11 +22711,12 @@ async function unlinkFromProvider() {
             updates['extensions.cl.pageName'] = provPageName;
         }
 
-        const success = await window.applyCardFieldUpdates(activeChar.avatar, updates);
-        if (!success) throw new Error('Failed to save unlink');
+        const result = await writeCardFields(targetChar, updates, { surgical: true });
+        if (!result.ok) throw new Error('Failed to save unlink');
+        try { await notifySTCharacterEdited(targetChar.avatar); } catch (_) { /* persisted successfully */ }
 
         // Recompute the listing-name + tagline search keys on both refs: CL-side state outside char.data, so the helper's write doesnt touch it.
-        for (const c of [activeChar, charInArray].filter(Boolean)) {
+        for (const c of [targetChar, charInArray].filter(Boolean)) {
             const ln = getListingNameFromExtensions(c);
             c._lowerListingName = ln ? ln.toLowerCase() : '';
             c._lowerTagline = getDisplayTagline(c).toLowerCase();
@@ -20934,8 +22724,10 @@ async function unlinkFromProvider() {
 
         showToast(`Unlinked from ${provider.name}`, 'info');
 
-        updateProviderLinkIndicator(activeChar);
-        openProviderLinkModal();
+        if (activeChar === targetChar) {
+            updateProviderLinkIndicator(targetChar);
+            openProviderLinkModal();
+        }
         
     } catch (error) {
         console.error('[Link] Unlink error:', error);
@@ -21960,31 +23752,31 @@ function updateBulkAutoLinkSelectedCount() {
 
 /**
  * Persist a provider link for a character.
- * Updates in-memory state via the provider's setLinkInfo, then saves to server.
+ * Stage the provider namespace after hydration, then update live state only after persistence.
  */
 async function saveProviderLink(char, provider, linkInfo) {
     if (!char?.avatar) throw new Error('No character or avatar');
+    await hydrateCharacter(char);
+    if (!extensionsReady(char)) throw new Error('Could not load the existing provider link');
 
     // Non-blocking auto-snapshot before link (overwrites the cl namespace).
     if (window.autoSnapshotBeforeChange) {
         try { await window.autoSnapshotBeforeChange(char, 'link'); } catch (_) {}
     }
 
-    // Populate provider namespace + drop cl in-memory so the spread carries the new link and the cl-delete has a target.
-    provider.setLinkInfo(char, linkInfo);
+    const staged = {
+        ...char,
+        data: { ...char.data, extensions: structuredClone(char.data?.extensions || char.extensions || {}) },
+    };
+    provider.setLinkInfo(staged, linkInfo);
+    const namespace = staged.data.extensions[provider.id];
     const charInArray = allCharacters.find(c => c.avatar === char.avatar);
-    if (charInArray && charInArray !== char) {
-        provider.setLinkInfo(charInArray, linkInfo);
-    }
-    for (const c of [char, charInArray].filter(Boolean)) {
-        if (c.data?.extensions && 'cl' in c.data.extensions) delete c.data.extensions.cl;
-    }
 
-    // Persist via applyCardFieldUpdates; the provider namespace rides the existing-extensions spread, so only the cl-delete is a dot-path update.
-    const success = await window.applyCardFieldUpdates(char.avatar, {
+    const result = await writeCardFields(char, {
+        [`extensions.${provider.id}`]: namespace ?? ST_UNSET_SENTINEL,
         'extensions.cl': ST_UNSET_SENTINEL,
-    });
-    if (!success) throw new Error('Failed to save provider link');
+    }, { surgical: true });
+    if (!result.ok) throw new Error('Failed to save provider link');
 
     // Recompute the listing-name + tagline search keys (CL-side state outside char.data; helper doesnt know about it).
     const listingName = getListingNameFromExtensions(char);
@@ -21995,11 +23787,18 @@ async function saveProviderLink(char, provider, linkInfo) {
         charInArray._lowerTagline = char._lowerTagline;
     }
 
-    // Same-tick ST sync: setLinkInfo on mainChar makes the new link visible immediately, ahead of the async refetch.
+    // Same-tick ST sync uses the exact persisted namespace, including its timestamp.
     try {
         const context = getSTContext();
         const mainChar = context?.characters?.find(c => c.avatar === char.avatar);
-        if (mainChar) provider.setLinkInfo(mainChar, linkInfo);
+        if (mainChar) {
+            mainChar.data ||= {};
+            mainChar.data.extensions ||= {};
+            if (namespace) mainChar.data.extensions[provider.id] = structuredClone(namespace);
+            else delete mainChar.data.extensions[provider.id];
+            delete mainChar.data.extensions.cl;
+        }
+        await notifySTCharacterEdited(char.avatar);
     } catch (_) { /* non-critical */ }
 }
 
@@ -22128,7 +23927,6 @@ window.openBulkAutoLinkModal = openBulkAutoLinkModal;
 document.getElementById('bulkAutoLinkBtn')?.addEventListener('click', openBulkAutoLinkModal);
 document.getElementById('recommenderBtn')?.addEventListener('click', () => window.openRecommender?.());
 document.getElementById('creatorBtn')?.addEventListener('click', () => window.openCharacterCreator?.());
-document.getElementById('lorebooksBtn')?.addEventListener('click', () => window.openLorebookManager?.());
 document.getElementById('tagsManagerBtn')?.addEventListener('click', async () => {
     // First open imports the module + its CSS; cover the gap so it never paints half-built
     const cold = !window.ModuleLoader?.modules?.['tags-manager'];
@@ -23931,7 +25729,7 @@ charLocalizeToggle?.addEventListener('change', async () => {
     if (isChecked) {
         const desc = activeChar.description || (activeChar.data ? activeChar.data.description : "") || "";
         const firstMes = activeChar.first_mes || (activeChar.data ? activeChar.data.first_mes : "") || "";
-        const altGreetings = activeChar.alternate_greetings || (activeChar.data ? activeChar.data.alternate_greetings : []) || [];
+        const altGreetings = (activeChar.data?.alternate_greetings ?? activeChar.alternate_greetings) ?? [];
         const creatorNotes = activeChar.creator_notes || (activeChar.data ? activeChar.data.creator_notes : "") || "";
         
         await applyMediaLocalizationToModal(activeChar, desc, firstMes, altGreetings, creatorNotes);
@@ -25922,9 +27720,14 @@ function calculateCharacterSimilarity(charA, charB) {
     }
     
     // === CONTENT IDENTICAL CHECK ===
+    // Previously gated behind breakdown.name && breakdown.creator && substantialPairs >= 1, which
+    // meant two byte-identical cards with short fields (all under the fuzzy comparisons' 20/30/50
+    // char minimums) or an empty creator on either side never even ran this check - exact
+    // duplicates were silently missed. An exact-text comparison needs none of those preconditions;
+    // it's checked directly against whatever content exists, at any length.
     let contentIdentical = false;
     let strictIdentical = false;
-    if (breakdown.name && breakdown.creator && substantialPairs >= 1) {
+    {
         const has = (t) => !!(t && t.length > 0);
         const asymmetric = (a, b) => has(a) !== has(b);
         const textMismatch = (a, b) => has(a) && has(b) && contentSimilarity(a, b) < 1.0;
@@ -25934,7 +27737,12 @@ function calculateCharacterSimilarity(charA, charB) {
         const sysPromptA = getCharField(charA, 'system_prompt') || '';
         const sysPromptB = getCharField(charB, 'system_prompt') || '';
 
-        contentIdentical = true;
+        // Two cards with every one of these fields blank aren't "identical content" - there's
+        // nothing to compare, so require at least one non-empty to avoid flagging two minimal/
+        // stub characters (name + avatar only) as duplicates of each other.
+        const anyContent = has(descA) || has(firstMesA) || has(persA) || has(scenA) || has(notesA) || has(mesExA) || has(sysPromptA);
+
+        contentIdentical = anyContent;
         if (asymmetric(descA, descB) || textMismatch(descA, descB)) contentIdentical = false;
         if (asymmetric(firstMesA, firstMesB) || textMismatch(firstMesA, firstMesB)) contentIdentical = false;
         if (asymmetric(persA, persB) || textMismatch(persA, persB)) contentIdentical = false;
@@ -25955,7 +27763,15 @@ function calculateCharacterSimilarity(charA, charB) {
             if (!eq(sysPromptA, sysPromptB)) strictIdentical = false;
         }
     }
-    
+
+    // An exact text match is never a false positive regardless of what the fuzzy scoring above
+    // produced - force it to the top of the confidence scale so it can't be filtered out by a
+    // min-score threshold the way a short-content pair previously could be.
+    if (strictIdentical) {
+        score = Math.max(score, 100);
+        matchReasons.unshift('Exact content match');
+    }
+
     // === DETERMINE CONFIDENCE ===
     let confidence = null;
     if (score >= 60) confidence = 'high';
@@ -27171,7 +28987,8 @@ async function viewDupCharGallery(el) {
 }
 
 
-// Detail-modal hero avatar -> gallery viewer; avatar is image 0, then the char's viewable gallery media (images + videos, no audio) via the shared builder so it matches the gallery tab.
+// Detail-modal hero avatar -> gallery viewer; avatar is image 0, then the char's viewable gallery
+// media (images + videos, no audio) via the shared builder so it matches the gallery tab.
 async function openAvatarInGalleryViewer(char) {
     if (!char || !window.openGalleryViewerWithImages) return;
     const images = [{ name: char.name || 'Avatar', url: getCharacterAvatarUrl(char.avatar), type: 'image' }];
@@ -27179,7 +28996,14 @@ async function openAvatarInGalleryViewer(char) {
     try {
         const info = await getCharacterGalleryInfo(char);
         folder = info.folder || null;
-        images.push(...buildGalleryViewerMedia(info.files, info.folder));
+        const local = buildGalleryViewerMedia(info.files, info.folder);
+        images.push(...local);
+
+        // Same remote set the gallery tab renders, so a card with localization off opens its whole
+        // image set here too instead of the lone avatar.
+        images.push(
+            ...dedupeRemoteAgainstLocal(collectRemoteCardMedia(char), local.map(m => m.name))
+        );
     } catch (e) {
         debugLog('[AvatarViewer] gallery fetch failed, showing avatar only:', e);
     }
@@ -28217,7 +30041,7 @@ function estimateCreatorNotesHeight(html) {
  */
 function createCreatorNotesIframe(srcdoc, initialHeight) {
     const iframe = document.createElement('iframe');
-    iframe.sandbox = 'allow-same-origin allow-popups allow-popups-to-escape-sandbox';
+    iframe.sandbox = 'allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox';
     const h = initialHeight || CreatorNotesConfig.MIN_HEIGHT;
     iframe.style.cssText = `
         width: 100%;
@@ -28524,7 +30348,7 @@ function openCreatorNotesFullscreen(content, charName, urlMap) {
                 <div class="creator-notes-fullscreen-body">
                     <iframe 
                         id="creatorNotesFullscreenIframe"
-                        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                        sandbox="allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox"
                     ></iframe>
                 </div>
             </div>
@@ -28759,7 +30583,7 @@ function openContentFullscreen(content, title, icon, charName, urlMap) {
  * @param {string} charName - Character name for placeholder replacement
  * @param {Object} [urlMap] - Pre-built localization map (optional)
  */
-function openAltGreetingsFullscreen(greetings, charName, urlMap) {
+function openAltGreetingsFullscreen(greetings, charName, urlMap, names) {
     if (!greetings || greetings.length === 0) {
         showToast('No alternate greetings to display', 'warning');
         return;
@@ -28788,15 +30612,17 @@ function openAltGreetingsFullscreen(greetings, charName, urlMap) {
     ).join('');
     
     // Build greeting cards - only the first card has content, others render lazily
-    const cardsHtml = greetings.map((g, i) => `
+    const cardsHtml = greetings.map((g, i) => {
+        const gName = (names && names[i] ? String(names[i]).trim() : '');
+        return `
         <div class="greeting-card" data-greeting-index="${i}" style="${i !== 0 ? 'display: none;' : ''}">
             <div class="greeting-header">
                 <div class="greeting-number">${i + 1}</div>
-                <div class="greeting-label">Alternate Greeting</div>
+                <div class="greeting-label">Alternate Greeting${gName ? ` &mdash; ${escapeHtml(gName)}` : ''}</div>
             </div>
             <div class="greeting-content">${i === 0 ? formatGreeting(g) : ''}</div>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
     
     const modalHtml = `
         <div id="altGreetingsFullscreenModal" class="modal-overlay">
@@ -28944,7 +30770,7 @@ function initContentExpandHandlers() {
                 const folderName = getGalleryFolderName(activeChar);
                 urlMap = await buildMediaLocalizationMap(folderName, activeChar.avatar);
             }
-            openAltGreetingsFullscreen(greetings, charName, urlMap);
+            openAltGreetingsFullscreen(greetings, charName, urlMap, activeChar?.data?.extensions?.alternate_greetings_names);
         };
         altGreetingsExpandBtn.addEventListener('click', altGreetingsExpandBtn._expandHandler);
     }
@@ -29626,7 +31452,7 @@ window.saveWorldInfoData = async function(worldName, data) {
  * file_id is the on-disk filename (no .json); name is the in-file title (falls back to file_id).
  * @returns {Promise<Array<{file_id: string, name: string, extensions: Object}>>}
  */
-window.listWorldInfoFiles = async function() {
+window.listWorldInfoFiles = async function({ strict = false } = {}) {
     try {
         const response = await apiRequest('/worldinfo/list', 'POST', {});
         if (response.ok) {
@@ -29642,8 +31468,10 @@ window.listWorldInfoFiles = async function() {
                 }).filter(e => e.file_id);
             }
         }
+        if (strict) throw new Error('Could not verify existing world names');
         console.error('[listWorldInfoFiles] API error:', response.status);
     } catch (error) {
+        if (strict) throw error;
         console.error('[listWorldInfoFiles] Error:', error);
     }
     return [];
@@ -29814,10 +31642,92 @@ window.charLoreRemoveWorld = async function(name) {
  * @param {Object} worldData - must contain an `entries` object
  * @returns {Promise<boolean>} Success
  */
+// Import embedded books after the card exists; never bake an unconfirmed world link into a PNG.
+window.importEmbeddedCardLorebook = async function(avatar, data) {
+    const book = data?.character_book;
+    if (!avatar || !Array.isArray(book?.entries) || !book.entries.length) return;
+    avatar = ensurePngExt(avatar);
+    try {
+        const { convertCharacterBookToNative } = await import('../modules/lorebook-conversion.js');
+        const base = sanitizeFolderName(book.name || data.name + "'s Lorebook") || 'Lorebook';
+        const worlds = await window.listWorldInfoFiles({ strict: true });
+        const names = new Set(worlds.map(w => w.file_id));
+        let name = base, suffix = 2;
+        while (names.has(name)) name = base + ' (' + suffix++ + ')';
+        if (!await window.importWorldInfoData(name, convertCharacterBookToNative(book))) throw new Error('Could not save embedded lorebook');
+        // Hydrate this upload before binding, without reloading the whole catalogue.
+        if (!await fetchAndAddCharacter(avatar, { skipNotify: true })) throw new Error('Could not read the uploaded card for lorebook binding');
+        const existing = data.extensions?.world;
+        if (existing && existing !== book.name && existing !== base) {
+            const additional = await window.getCharAdditionalLorebooks(avatar);
+            if (!await window.setCharAdditionalLorebooks(avatar, [...new Set([...additional, name])])) throw new Error('Book saved, but additional binding failed');
+        } else {
+            if (!await window.applyCardFieldUpdates(avatar, { 'extensions.world': name }, { awaitNotify: true })) throw new Error('Book saved, but primary binding failed');
+        }
+        await window.updateWorldInfoList?.();
+    } catch (error) {
+        console.warn('[Import] Embedded book:', error);
+        showToast('Card imported; embedded lorebook needs attention: ' + error.message, 'warning', 6000);
+    }
+};
+
 window.importWorldInfoData = async function(worldName, worldData) {
     if (!worldName || !worldData || typeof worldData !== 'object') return false;
     if (!worldData.entries || typeof worldData.entries !== 'object') return false;
     return window.saveWorldInfoData(worldName, worldData);
+};
+
+/**
+ * Refresh ST's internal world_names array and dropdown UI.
+ * ST exposes updateWorldInfoList via SillyTavern.getContext(). This wrapper
+ * calls it if available so newly created/imported worlds appear immediately
+ * in the WI editor and character world picker without a page reload.
+ * @returns {Promise<void>}
+ */
+window.updateWorldInfoList = async function() {
+    try {
+        const ctx = window.getSTContext?.() || SillyTavern?.getContext?.();
+        if (typeof ctx?.updateWorldInfoList === 'function') {
+            await ctx.updateWorldInfoList();
+        }
+    } catch (e) {
+        console.warn('[updateWorldInfoList] Could not refresh ST world list:', e);
+    }
+};
+
+/**
+ * Assign a world file as the primary lorebook for a character in ST's internal
+ * state. This sets characters[chid].data.extensions.world and saves the character,
+ * so vanilla ST knows the embedded lorebook has already been imported and won't
+ * prompt the user with "import card lore" when they view the character outside CL.
+ * @param {string} avatar - Character avatar filename
+ * @param {string} worldName - World/lorebook name to assign
+ * @returns {Promise<boolean>} Success
+ */
+window.assignCharacterWorld = async function(avatar, worldName) {
+    if (!avatar || !worldName) return false;
+    try {
+        const ctx = window.getSTContext?.() || SillyTavern?.getContext?.();
+        const characters = ctx?.characters;
+        if (!Array.isArray(characters)) return false;
+
+        const chid = characters.findIndex(c => c?.avatar === avatar);
+        if (chid === -1) return false;
+
+        // Update in-memory character so vanilla ST won't prompt "import card lore"
+        // for a character CL already imported. The card on disk already has the
+        // world link (CL pre-links it before upload), so the next page load will
+        // also see the correct state. This sync is for the current session only.
+        const char = characters[chid];
+        if (!char.data) char.data = {};
+        if (!char.data.extensions) char.data.extensions = {};
+        char.data.extensions.world = worldName;
+
+        return true;
+    } catch (e) {
+        console.warn('[assignCharacterWorld] Could not assign world:', e);
+        return false;
+    }
 };
 
 /**
@@ -30178,6 +32088,7 @@ async function writeCardFields(char, fieldUpdates, opts = {}) {
         );
         if (touchedNameOrCreator) window.ProviderRegistry?.invalidateBrowseLookupBase?.();
 
+        window.LocalQuality?.invalidate(char.avatar);
         return { ok: true, response };
     } catch (error) {
         console.error('[writeCardFields] Error:', error);

@@ -18,7 +18,7 @@ import {
     ctLogout,
     isCtSessionActive,
     getCtCharName,
-} from './chartavern-api.js';
+} from './chartavern-api.js?v=ct2';
 
 const {
     onElement: on,
@@ -641,7 +641,7 @@ function openPreviewModal(hit) {
     if (charBody) charBody.scrollTop = 0;
 
     // If no definition was available in the search hit, fetch full details
-    if (!charDef) {
+    if (!charDef && !hit._modernDetailLoaded) {
         const fetchToken = ++ctDetailFetchToken;
         fetchAndPopulateDetails(hit, fetchToken);
     }
@@ -664,6 +664,24 @@ async function fetchAndPopulateDetails(hit, token) {
         }
 
         const card = data.card;
+
+        if (card._exportCard?.data) {
+            const exported = card._exportCard.data;
+            Object.assign(hit, {
+                _fullDetail: card, _modernDetailLoaded: true,
+                tags: card.tags, totalTokens: card.tokenTotal, likes: card.likes,
+                createdAt: card.createdAt ? Date.parse(card.createdAt) / 1000 : 0,
+                pageDescription: exported.creator_notes || '',
+                characterDefinition: exported.description || '',
+                characterScenario: exported.scenario || '',
+                characterFirstMessage: exported.first_mes || '',
+                characterExampleMessages: exported.mes_example || '',
+                alternativeFirstMessage: exported.alternate_greetings || [],
+                hasLorebook: !!exported.character_book,
+            });
+            openPreviewModal(hit);
+            return;
+        }
 
         // Store full data on the selected char for import
         if (ctSelectedChar?.path === hit.path) {
@@ -1590,7 +1608,7 @@ class ChartavernBrowseView extends BrowseView {
                 { value: 'most_popular', label: 'Most Popular' },
                 { value: 'trending', label: 'Trending' },
                 { value: 'newest', label: 'Newest' },
-                { value: 'oldest', label: 'Oldest' },
+                { value: 'recently_updated', label: 'Recently Updated' },
                 { value: 'most_likes', label: 'Most Liked' },
             ],
             followingSortOptions: [],
@@ -1622,7 +1640,7 @@ class ChartavernBrowseView extends BrowseView {
                     <option value="most_popular" selected>🔥 Most Popular</option>
                     <option value="trending">📈 Trending</option>
                     <option value="newest">🆕 Newest</option>
-                    <option value="oldest">🕐 Oldest</option>
+                    <option value="recently_updated">🕐 Recently Updated</option>
                     <option value="most_likes">❤️ Most Liked</option>
                 </select>
             </div>

@@ -55,13 +55,25 @@ function reconcileNewDisabledByDefault() {
     if (!Array.isArray(disabled) || (!Array.isArray(order) && !disabled.length)) return;
 
     const seen = new Set([...(Array.isArray(order) ? order : []), ...disabled]);
+    // Fork (Rayas-Tavern): remember which providers this reconcile already opted
+    // out. Without this, a user who ENABLES a disabledByDefault provider removes
+    // it from both providerOrder-derived lists, so reconcile would re-add it on
+    // every boot and the enable would never stick. Once tracked, the user's
+    // choice owns the flag from then on.
+    const tracked = new Set(coreAPI?.getSetting?.('reconciledDisabledByDefault') || []);
     const next = [...disabled];
+    let changed = false;
     for (const provider of providers.values()) {
-        if (!provider.disabledByDefault || seen.has(provider.id)) continue;
+        if (!provider.disabledByDefault || seen.has(provider.id) || tracked.has(provider.id)) continue;
         next.push(provider.id);
+        tracked.add(provider.id);
+        changed = true;
         coreAPI?.debugLog?.(`[ProviderRegistry] New disabled-by-default provider, opting out: ${provider.id}`);
     }
-    if (next.length !== disabled.length) coreAPI?.setSetting?.('disabledProviders', next);
+    if (changed) {
+        coreAPI?.setSetting?.('disabledProviders', next);
+        coreAPI?.setSetting?.('reconciledDisabledByDefault', [...tracked]);
+    }
 }
 
 /**

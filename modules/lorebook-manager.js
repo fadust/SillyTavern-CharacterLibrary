@@ -1,7 +1,9 @@
+import { newEntry, convertCharacterBookToNative } from './lorebook-conversion.js';
 // Lorebook Manager: full-screen manager for standalone World Info files (list/edit/create/rename/
 // duplicate/import/export) via ST's /worldinfo helpers. Character-embedded books edit in the detail modal.
 
 import CoreAPI from './core-api.js';
+import FolderStore from './lorebook-folders.js?v=2';
 import { proxyEncode } from './providers/provider-utils.js';
 
 const esc = (s) => CoreAPI.escapeHtml(String(s ?? ''));
@@ -69,87 +71,6 @@ function sanitizeWorldName(name) {
     return s.replace(/\.json$/i, '');
 }
 
-function newEntry(uid, displayIndex) {
-    return {
-        uid,
-        key: [], keysecondary: [],
-        comment: '', content: '',
-        constant: false, vectorized: false,
-        selective: true, selectiveLogic: 0,
-        addMemo: false,
-        order: 100, position: 0,
-        disable: false, ignoreBudget: false,
-        excludeRecursion: false, preventRecursion: false,
-        matchPersonaDescription: false, matchCharacterDescription: false,
-        matchCharacterPersonality: false, matchCharacterDepthPrompt: false,
-        matchScenario: false, matchCreatorNotes: false,
-        delayUntilRecursion: 0,
-        probability: 100, useProbability: true,
-        depth: 4, outletName: '',
-        group: '', groupOverride: false, groupWeight: 100,
-        scanDepth: null, caseSensitive: null, matchWholeWords: null, useGroupScoring: null,
-        automationId: '', role: 0,
-        sticky: null, cooldown: null, delay: null,
-        triggers: [],
-        displayIndex,
-    };
-}
-
-// Port of ST's convertCharacterBook: embedded character_book (entries ARRAY) -> native
-// world file (entries OBJECT keyed by id). Lets the user import a card's V2/V3 JSON directly.
-function convertCharacterBookToNative(book) {
-    const result = { entries: {} };
-    const list = Array.isArray(book?.entries) ? book.entries : [];
-    list.forEach((entry, index) => {
-        const id = entry.id === undefined ? index : entry.id;
-        const ext = entry.extensions || {};
-        const posFromString = entry.position === 'before_char' ? 0 : 1;
-        result.entries[id] = {
-            ...newEntry(id, ext.display_index ?? index),
-            key: Array.isArray(entry.keys) ? entry.keys : [],
-            keysecondary: entry.secondary_keys || [],
-            comment: entry.comment || '',
-            content: entry.content || '',
-            constant: entry.constant || false,
-            selective: entry.selective || false,
-            order: entry.insertion_order ?? 100,
-            position: ext.position ?? posFromString,
-            excludeRecursion: ext.exclude_recursion ?? false,
-            preventRecursion: ext.prevent_recursion ?? false,
-            delayUntilRecursion: ext.delay_until_recursion ?? 0,
-            disable: !entry.enabled,
-            addMemo: !!entry.comment,
-            probability: ext.probability ?? 100,
-            useProbability: ext.useProbability ?? true,
-            depth: ext.depth ?? 4,
-            selectiveLogic: ext.selectiveLogic ?? 0,
-            group: ext.group ?? '',
-            groupOverride: ext.group_override ?? false,
-            groupWeight: ext.group_weight ?? 100,
-            scanDepth: ext.scan_depth ?? null,
-            caseSensitive: ext.case_sensitive ?? null,
-            matchWholeWords: ext.match_whole_words ?? null,
-            useGroupScoring: ext.use_group_scoring ?? null,
-            automationId: ext.automation_id ?? '',
-            role: ext.role ?? 0,
-            vectorized: ext.vectorized ?? false,
-            sticky: ext.sticky ?? null,
-            cooldown: ext.cooldown ?? null,
-            delay: ext.delay ?? null,
-            outletName: ext.outlet_name ?? '',
-            ignoreBudget: ext.ignore_budget ?? false,
-            triggers: ext.triggers ?? [],
-            matchPersonaDescription: ext.match_persona_description ?? false,
-            matchCharacterDescription: ext.match_character_description ?? false,
-            matchCharacterPersonality: ext.match_character_personality ?? false,
-            matchCharacterDepthPrompt: ext.match_character_depth_prompt ?? false,
-            matchScenario: ext.match_scenario ?? false,
-            matchCreatorNotes: ext.match_creator_notes ?? false,
-        };
-    });
-    return result;
-}
-
 // ========================================
 // MODULE STATE
 // ========================================
@@ -164,25 +85,35 @@ let linkedMap = new Map();    // file_id -> [{ avatar, name, char }]  (character
 let auxMap = new Map();
 let charLoreEditable = false; // ST window reachable -> additional-book writes possible
 
-// "Used by" lens: 'characters' (card extensions.world) | 'chats' (chat_metadata.world_info).
-// Governs the sidebar badges + sort and the editor's usage section. Per manager session.
-let usedByMode = 'characters';
 // world file_id -> [{ avatar, charName, char, file_name }] of chats bound to it.
 let chatBoundMap = new Map();
 let chatIndexLoaded = false;     // has the reverse index been built this session?
 let chatIndexLoading = false;
+let chatIndexFailed = false;
+let chatIndexToken = 0;       // ignore an index request from a closed manager session
 
 let currentWorld = null;      // file_id of the open world
 let workingWorld = null;      // deep-cloned working copy { entries: {...}, ... }
 let originalSnapshot = '';    // JSON of workingWorld at load/save, for dirty compare
 let diskSnapshot = '';        // JSON of the file AS LOADED (pre-repair), for the save divergence guard
 let dirty = false;
+let worldLoadToken = 0;
+let worldSaveInProgress = false;
 
 let worldSearch = '';
 let worldSort = 'name';
 let entrySearch = '';
 let entrySort = 'order';
 let creatingNew = false;
+let folderLoadError = false;
+let organizeJob = null;
+let organizeBusy = false;
+let organizeTags = [];
+const selectedWorldTags = new Set();
+let untaggedOnly = false;
+let worldTagMatch = 'all';
+let tagFilterOpen = false;
+let tagFilterSearch = '';
 
 const expandedUids = new Set();
 const advancedUids = new Set();
@@ -198,6 +129,7 @@ let linkBook = null;             // file_id the picker is linking
 let linkMode = 'characters';     // 'characters' | 'chats'
 let linkManageMode = false;      // true = "manage links" view (show only linked, action = unlink)
 let linkAsAux = false;           // characters mode: add as additional book instead of setting primary
+let linkAuxManage = false;       // characters mode: checked set IS the additional-lorebook membership
 let linkAuxSet = new Set();      // avatars carrying linkBook as an additional book (per picker open)
 let manageChatList = [];         // chats mode + manage: the book's bound chats (cross-character)
 let linkChatChar = null;         // chats mode: the character whose chats we're picking
@@ -259,19 +191,28 @@ function createModal() {
                     <div class="lb-sidebar-tools">
                         <div class="lb-search-wrap">
                             <i class="fa-solid fa-magnifying-glass"></i>
-                            <input type="search" id="lbWorldSearch" class="cl-input" placeholder="Search lorebooks or characters..." autocomplete="off">
+                            <input type="search" id="lbWorldSearch" class="cl-input" placeholder="Search lorebooks, characters, chats..." autocomplete="off">
                         </div>
                         <div class="lb-tools-row">
-                            <div class="lb-usedby-seg" role="group" aria-label="Used-by view">
-                                <button class="lb-usedby-opt active" data-action="usedby-mode" data-mode="characters" title="Used by characters (primary links)" aria-label="Used by characters"><i class="fa-solid fa-user"></i></button>
-                                <button class="lb-usedby-opt" data-action="usedby-mode" data-mode="chats" title="Used by chats (chat-bound)" aria-label="Used by chats"><i class="fa-solid fa-comment-dots"></i></button>
-                            </div>
                             <select id="lbWorldSort" class="lb-sort-select">
                                 <option value="name">Name A-Z</option>
                                 <option value="name_desc">Name Z-A</option>
                                 <option value="entries">Most entries</option>
                                 <option value="linked">Most linked</option>
                             </select>
+                            <button class="lb-icon-btn lb-new-folder-btn" id="lbNewFolderBtn" title="New folder" aria-label="New folder" disabled><i class="fa-solid fa-folder-plus"></i></button>
+                        </div>
+                        <button class="lb-tag-filter-toggle" id="lbTagFilterBtn" aria-label="Filter lorebooks by tags" aria-controls="lbTagFilterPanel" aria-expanded="false" disabled>
+                            <i class="fa-solid fa-tags"></i> Tags <span id="lbTagFilterSummary">All</span><i class="fa-solid fa-chevron-down"></i>
+                        </button>
+                        <div id="lbTagFilterPanel" class="lb-tag-filter-panel hidden">
+                            <input type="search" id="lbTagFilterSearch" class="cl-input" placeholder="Search tags..." autocomplete="off">
+                            <select id="lbTagMatch" class="cl-input" aria-label="Tag match mode">
+                                <option value="all">Match all selected</option><option value="any">Match any selected</option>
+                            </select>
+                            <label class="lb-tag-filter-option"><input type="checkbox" id="lbUntaggedOnly"> Untagged</label>
+                            <div id="lbTagFilterOptions" class="lb-tag-filter-options"></div>
+                            <button type="button" class="lb-tag-clear" id="lbClearTagFilters">Clear tag filters</button>
                         </div>
                     </div>
                     <div class="lb-world-list" id="lbWorldList"></div>
@@ -285,6 +226,35 @@ function createModal() {
                 </section>
             </div>
         </div>
+    </div>
+
+    <div id="lbOrganizeModal" class="cl-modal" role="dialog" aria-modal="true" aria-labelledby="lbOrganizeTitle">
+        <form class="cl-modal-content lb-organize-modal" id="lbOrganizeForm">
+            <div class="cl-modal-header">
+                <h3 id="lbOrganizeTitle">New folder</h3>
+                <button type="button" class="cl-modal-close" id="lbOrganizeCloseBtn" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="cl-modal-body">
+                <label for="lbOrganizeName" id="lbOrganizeNameLabel">Folder name</label>
+                <input id="lbOrganizeName" class="cl-input" type="text" maxlength="80" autocomplete="off">
+                <label for="lbOrganizeTarget" id="lbOrganizeTargetLabel">Folder</label>
+                <select id="lbOrganizeTarget" class="cl-input"></select>
+                <div id="lbOrganizeTags" class="hidden">
+                    <div id="lbTagDraft" class="lb-tag-draft"></div>
+                    <div class="lb-tag-add-row">
+                        <input id="lbTagName" class="cl-input" type="text" maxlength="80" placeholder="Add a tag..." aria-label="Tag name" autocomplete="off">
+                        <button type="button" class="cl-btn cl-btn-secondary" id="lbAddTagBtn">Add</button>
+                    </div>
+                    <p class="lb-organize-hint">Press Enter to add a tag, or reuse one below. Save to apply changes.</p>
+                    <div id="lbTagSuggestions" class="lb-tag-suggestions"></div>
+                </div>
+                <p class="lb-organize-hint" id="lbOrganizeHint"></p>
+            </div>
+            <div class="cl-modal-footer">
+                <button type="button" class="cl-btn cl-btn-secondary" id="lbOrganizeCancelBtn">Cancel</button>
+                <button type="submit" class="cl-btn cl-btn-primary" id="lbOrganizeApplyBtn">Create</button>
+            </div>
+        </form>
     </div>
 
     <div id="lbLinkModal" class="cl-modal">
@@ -352,10 +322,6 @@ async function openModal(focusWorld) {
         if (sortSel) CoreAPI.initCustomSelect(sortSel);
     }
     modal.classList.remove('hidden');
-    // Sync the persistent toggle DOM + placeholder to the (reset) Characters lens on each open.
-    document.querySelectorAll('.lb-usedby-opt').forEach(b => b.classList.toggle('active', b.dataset.mode === usedByMode));
-    const wsEl = document.getElementById('lbWorldSearch');
-    if (wsEl) wsEl.placeholder = usedByMode === 'chats' ? 'Search lorebooks or chats...' : 'Search lorebooks or characters...';
     // focusWorld may arrive as an event object when wired directly to a listener; ignore non-strings.
     const target = typeof focusWorld === 'string' ? focusWorld : null;
     await refreshList({ keepSelection: !target });
@@ -381,6 +347,9 @@ function closeModal() {
 }
 
 function forceClose() {
+    worldLoadToken++;
+    closeOrganizeDialog();
+    const returnToChat = document.documentElement.classList.contains('cl-lorebooks-only');
     document.getElementById('lorebookModal')?.classList.add('hidden');
     // Release the heavy buffers so a closed manager doesn't pin a full world file + string snapshot
     // + live char refs for the session (the back-to-list and delete paths already did; desktop close was the gap).
@@ -399,8 +368,31 @@ function forceClose() {
     linkChatChar = null;
     // Drop the chat reverse index (can be large); it rebuilds lazily on next Chats toggle.
     invalidateChatIndex();
-    // Reset the lens to match the freshly-built toggle DOM (defaults to Characters) on reopen.
-    usedByMode = 'characters';
+    // Top-bar launch owns the whole embedded panel. Closing the manager returns to the chat.
+    // Opening a linked world from character details leaves this class off, so it only hides the modal.
+    if (returnToChat && window.parent && window.parent !== window) {
+        window.parent.postMessage({ source: 'character-library', type: 'cl-close' }, window.location.origin);
+    }
+}
+
+// Character names for "used by" arrive after the book list. Repaint the sidebar counts and the
+// open editor's chips without rebuilding the entry form (that would drop in-progress edits).
+async function refreshUsedBy() {
+    const modal = document.getElementById('lorebookModal');
+    if (!modal || modal.classList.contains('hidden') || !worldsList.length) return;
+    buildLinkedMap();
+    await refreshAuxMap();
+    renderWorldList();
+    paintEditorUsedBy();
+}
+
+function paintEditorUsedBy() {
+    const meta = document.querySelector('#lbContent .lb-editor-meta');
+    if (!meta || !currentWorld) return;
+    const pill = meta.querySelector(':scope > .lb-meta-pill');
+    if (!pill) return;
+    while (pill.nextSibling) pill.nextSibling.remove();
+    pill.insertAdjacentHTML('afterend', renderRelationMeta());
 }
 
 // ========================================
@@ -410,6 +402,13 @@ function forceClose() {
 async function refreshList({ keepSelection = false } = {}) {
     // No first-load loader: the list paints as soon as the fetch resolves; the loading
     // animation was more distracting than the brief empty state it replaced.
+    try {
+        await FolderStore.load();
+        folderLoadError = false;
+    } catch (e) {
+        folderLoadError = true;
+        console.warn('[Lorebooks] Folder load failed', e);
+    }
     worldsList = await CoreAPI.listWorldInfoFiles();
     buildLinkedMap();
     await refreshAuxMap();
@@ -421,6 +420,7 @@ async function refreshList({ keepSelection = false } = {}) {
         renderEmptyContent();
     }
     backfillEntryCounts();
+    ensureChatIndex();
 }
 
 // Lazily fetch entry counts for worlds we haven't counted yet, a few at a time, so the
@@ -490,31 +490,31 @@ function entryCountOf(world) {
     return entryCountCache.has(world.file_id) ? entryCountCache.get(world.file_id) : null;
 }
 
-// "Used by" count for a world under the active lens. Characters: char-link count (in memory).
-// Chats: chat-bind count from the reverse index (null until the index is built -> shows "...").
+// Count relationships separately: a character can use a book as both primary and additional.
+function bindingCountsFor(fileId) {
+    return {
+        primary: (linkedMap.get(fileId) || []).length,
+        additional: (auxMap.get(fileId) || []).length,
+        chats: chatIndexLoaded ? (chatBoundMap.get(fileId) || []).length : null,
+    };
+}
+
 function usedByCount(fileId) {
-    if (usedByMode === 'chats') {
-        if (!chatIndexLoaded) return null;
-        return (chatBoundMap.get(fileId) || []).length;
-    }
-    // Union of primary + additional users; a char with both counts once.
-    const prim = linkedMap.get(fileId) || [];
-    const aux = auxMap.get(fileId) || [];
-    if (!aux.length) return prim.length;
-    const set = new Set(prim.map(l => l.avatar));
-    aux.forEach(a => set.add(a.avatar));
-    return set.size;
+    const counts = bindingCountsFor(fileId);
+    return counts.primary + counts.additional + (counts.chats ?? 0);
 }
 
 // Build world file_id -> bound chats, from one /chats/recent (all chats, with metadata).
-// Lazy: only when the user first flips to Chats mode. Cached for the session; invalidated
-// on bind/unbind. Re-renders the sidebar when ready so badges fill in.
+// Start in the background when the list opens. Cached for the session; updates after
+// bind/unbind keep the sidebar and editor in sync without fetching every chat again.
 async function ensureChatIndex() {
-    if (chatIndexLoaded || chatIndexLoading) return;
+    if (chatIndexLoaded || chatIndexLoading || chatIndexFailed) return;
+    const token = ++chatIndexToken;
     chatIndexLoading = true;
     renderWorldList(); // show "..." placeholders immediately
     try {
         const all = await CoreAPI.listAllChatsWithMeta();
+        if (token !== chatIndexToken) return;
         chatBoundMap = new Map();
         for (const c of all) {
             if (!chatBoundMap.has(c.world)) chatBoundMap.set(c.world, []);
@@ -522,47 +522,42 @@ async function ensureChatIndex() {
         }
         chatIndexLoaded = true;
     } catch (e) {
+        if (token !== chatIndexToken) return;
+        chatIndexFailed = true;
         console.error('[Lorebooks] chat index build failed', e);
     } finally {
+        if (token !== chatIndexToken) return;
         chatIndexLoading = false;
         renderWorldList();
-        if (currentWorld) renderEditor();
+        // Patch the chips only. A full renderEditor here would wipe entry text typed while the index loaded.
+        if (currentWorld) paintEditorUsedBy();
     }
 }
 
 function invalidateChatIndex() {
+    ++chatIndexToken;
+    chatIndexLoading = false;
     chatIndexLoaded = false;
+    chatIndexFailed = false;
     chatBoundMap = new Map();
-}
-
-function setUsedByMode(mode) {
-    if (mode !== 'characters' && mode !== 'chats') return;
-    if (mode === usedByMode) return;
-    usedByMode = mode;
-    document.querySelectorAll('.lb-usedby-opt').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
-    const searchEl = document.getElementById('lbWorldSearch');
-    if (searchEl) searchEl.placeholder = mode === 'chats' ? 'Search lorebooks or chats...' : 'Search lorebooks or characters...';
-    renderWorldList();
-    if (currentWorld) renderEditor();
-    if (mode === 'chats') ensureChatIndex(); // lazy build on first switch
 }
 
 // ========================================
 // WORLD LIST (SIDEBAR)
 // ========================================
 
-// Names (character names) under the active lens whose value matches the query, used to
-// surface "I know the character/chat, not the book". Characters lens -> linked char names;
-// Chats lens -> the character names of chats bound to this world.
+// Search every relationship, including chat filenames, without switching views.
 function matchedNamesFor(fileId, q) {
     if (!q) return [];
-    if (usedByMode === 'chats') {
-        return (chatBoundMap.get(fileId) || [])
-            .filter(c => (c.charName || '').toLowerCase().includes(q))
-            .map(c => c.charName);
-    }
     const both = [...(linkedMap.get(fileId) || []), ...(auxMap.get(fileId) || [])];
-    return [...new Set(both.filter(l => l.name.toLowerCase().includes(q)).map(l => l.name))];
+    const names = both.filter(l => l.name.toLowerCase().includes(q)).map(l => l.name);
+    for (const chat of chatBoundMap.get(fileId) || []) {
+        const chatName = (chat.file_name || '').replace(/\.jsonl$/i, '');
+        if (`${chat.charName || ''} ${chatName}`.toLowerCase().includes(q)) {
+            names.push(`${chat.charName || chat.avatar}: ${chatName}`);
+        }
+    }
+    return [...new Set(names)];
 }
 
 function worldMatchesQuery(w, q) {
@@ -573,9 +568,60 @@ function worldMatchesQuery(w, q) {
     return matchedNamesFor(w.file_id, q).length > 0;
 }
 
+function getWorldTagOptions() {
+    const options = new Map();
+    for (const world of worldsList) {
+        const counted = new Set();
+        for (const tag of FolderStore.getTags(world.file_id)) {
+            const key = tag.toLowerCase();
+            if (counted.has(key)) continue;
+            counted.add(key);
+            if (!options.has(key)) options.set(key, { key, tag, count: 0 });
+            options.get(key).count++;
+        }
+    }
+    // Keep selected zero-count tags available, so removing a book's last tag never
+    // silently clears an active filter and unexpectedly shows the whole library.
+    for (const key of selectedWorldTags) if (!options.has(key)) options.set(key, { key, tag: key, count: 0 });
+    return [...options.values()].sort((a, b) => a.tag.localeCompare(b.tag));
+}
+
+function worldMatchesTags(world) {
+    const keys = new Set(FolderStore.getTags(world.file_id).map(tag => tag.toLowerCase()));
+    if (untaggedOnly) return keys.size === 0;
+    if (!selectedWorldTags.size) return true;
+    const selected = [...selectedWorldTags];
+    return worldTagMatch === 'any' ? selected.some(key => keys.has(key)) : selected.every(key => keys.has(key));
+}
+
+function hasWorldFilters() {
+    return !!worldSearch.trim() || selectedWorldTags.size > 0 || untaggedOnly;
+}
+
+function renderTagFilters() {
+    const button = document.getElementById('lbTagFilterBtn');
+    if (!button) return;
+    button.disabled = !FolderStore.isReady();
+    button.setAttribute('aria-expanded', String(tagFilterOpen));
+    button.classList.toggle('active', selectedWorldTags.size > 0 || untaggedOnly);
+    document.getElementById('lbTagFilterSummary').textContent = untaggedOnly ? 'Untagged' : selectedWorldTags.size ? `${selectedWorldTags.size} selected` : 'All';
+    document.getElementById('lbTagFilterPanel').classList.toggle('hidden', !tagFilterOpen);
+    document.getElementById('lbUntaggedOnly').checked = untaggedOnly;
+    document.getElementById('lbTagMatch').value = worldTagMatch;
+    const options = document.getElementById('lbTagFilterOptions');
+    const focusedKey = document.activeElement?.closest('#lbTagFilterOptions') ? document.activeElement.dataset.tag : null;
+    const query = tagFilterSearch.trim().toLowerCase();
+    const tags = getWorldTagOptions().filter(t => t.tag.toLowerCase().includes(query));
+    options.innerHTML = tags.map(t => `<label class="lb-tag-filter-option">
+        <input type="checkbox" data-tag="${esc(t.key)}" ${selectedWorldTags.has(t.key) ? 'checked' : ''}>
+        <span class="lb-tag-label">${esc(t.tag)}</span><span class="lb-folder-count">${t.count}</span>
+    </label>`).join('') || `<p class="lb-tag-empty">${query ? 'No matching tags.' : 'No tags yet. Add tags using the tag button beside a lorebook.'}</p>`;
+    if (focusedKey !== null) [...options.querySelectorAll('input[data-tag]')].find(el => el.dataset.tag === focusedKey)?.focus();
+}
+
 function filteredSortedWorlds() {
     const q = worldSearch.trim().toLowerCase();
-    let list = worldsList.filter(w => worldMatchesQuery(w, q));
+    let list = worldsList.filter(w => worldMatchesQuery(w, q) && worldMatchesTags(w));
     const usedCount = (w) => usedByCount(w.file_id) ?? 0;
     switch (worldSort) {
         case 'name_desc':
@@ -590,12 +636,87 @@ function filteredSortedWorlds() {
     return list;
 }
 
+function renderBindingBadges(counts) {
+    const kinds = [
+        ['primary', 'link', 'Primary lorebook', 'character'],
+        ['additional', 'book-medical', 'Additional lorebook', 'character'],
+        ['chats', 'comments', 'Chat lorebook', 'chat'],
+    ];
+    return kinds.map(([kind, icon, label, unit]) => {
+        const count = counts[kind];
+        if (count === 0) return '';
+        const title = count === null
+            ? (chatIndexFailed ? 'Chat bindings unavailable' : 'Loading chat bindings...')
+            : `${label}: ${count} ${unit}${count === 1 ? '' : 's'}`;
+        const value = count === null ? (chatIndexFailed ? '?' : '...') : count;
+        return `<span class="lb-world-linked-badge lb-world-binding-${kind}" title="${title}" aria-label="${title}"><i class="fa-solid fa-${icon}" aria-hidden="true"></i>${value}</span>`;
+    }).join('');
+}
+
+// The saved folder order is stable; the selected world sort applies within each folder.
+// Search and tag filters expand matching groups without changing saved collapse states.
+function groupedWorlds(list = filteredSortedWorlds()) {
+    const groups = [...FolderStore.getFolders(), { id: '', name: 'Uncategorized' }]
+        .map(folder => ({ ...folder, worlds: [], total: 0,
+            expanded: hasWorldFilters() || !FolderStore.isCollapsed(folder.id) }));
+    const byId = new Map(groups.map(group => [group.id, group]));
+    for (const world of worldsList) (byId.get(FolderStore.folderFor(world.file_id)) || byId.get('')).total++;
+    for (const world of list) (byId.get(FolderStore.folderFor(world.file_id)) || byId.get('')).worlds.push(world);
+    return hasWorldFilters() ? groups.filter(group => group.worlds.length) : groups;
+}
+
+function visibleSortedWorlds() {
+    return groupedWorlds().filter(group => group.expanded).flatMap(group => group.worlds);
+}
+
+function renderWorldRow(w, q) {
+    const bindings = bindingCountsFor(w.file_id);
+    const count = entryCountOf(w);
+    const active = w.file_id === currentWorld ? ' active' : '';
+    const nameHit = q && w.file_id.toLowerCase().includes(q);
+    const nameHits = nameHit ? [] : matchedNamesFor(w.file_id, q);
+    const meta = [];
+    if (count === null) meta.push('...');
+    else meta.push(`${count} ${count === 1 ? 'entry' : 'entries'}`);
+    if (bindings.primary) meta.push(`${bindings.primary} primary`);
+    if (bindings.additional) meta.push(`${bindings.additional} additional`);
+    if (bindings.chats === null) meta.push(chatIndexFailed ? 'chats unavailable' : 'chats loading...');
+    else if (bindings.chats) meta.push(`${bindings.chats} chat${bindings.chats === 1 ? '' : 's'}`);
+    const viaLine = nameHits.length
+        ? `<span class="lb-world-via" title="${esc(nameHits.join(', '))}"><i class="fa-solid fa-magnifying-glass"></i> via ${esc(nameHits.join(', '))}</span>`
+        : '';
+    const badges = renderBindingBadges(bindings);
+    const tags = FolderStore.getTags(w.file_id);
+    const tagLine = tags.length ? `<span class="lb-world-tags">${tags.slice(0, 3).map(tag => `<span class="lb-world-tag" title="${esc(tag)}">${esc(tag)}</span>`).join('')}${tags.length > 3 ? `<span class="lb-world-tag" title="${esc(tags.slice(3).join(', '))}">+${tags.length - 3}</span>` : ''}</span>` : '';
+    return `
+        <div class="lb-world-item">
+            <button class="lb-world-row${active}${nameHits.length ? ' char-match' : ''}" data-action="select-world" data-world="${esc(w.file_id)}" title="${esc(w.file_id)}">
+                <i class="fa-solid fa-book lb-world-icon"></i>
+                <span class="lb-world-info">
+                    <span class="lb-world-name">${esc(w.file_id)}</span>
+                    <span class="lb-world-meta">${meta.map(part => `<span>${esc(part)}</span>`).join('  ·  ')}</span>
+                    ${viaLine}
+                    ${tagLine}
+                </span>
+                ${badges ? `<span class="lb-world-badges">${badges}</span>` : ''}
+            </button>
+            <span class="lb-world-actions">
+                <button class="lb-folder-action" data-action="edit-tags" data-world="${esc(w.file_id)}" title="Edit tags" aria-label="Edit tags for ${esc(w.file_id)}" ${FolderStore.isReady() ? '' : 'disabled'}><i class="fa-solid fa-tags"></i></button>
+                <button class="lb-folder-action lb-world-move" data-action="move-world" data-world="${esc(w.file_id)}" title="Move to folder" aria-label="Move ${esc(w.file_id)} to folder" ${FolderStore.isReady() ? '' : 'disabled'}><i class="fa-solid fa-folder-open"></i></button>
+            </span>
+        </div>`;
+}
+
 function renderWorldList() {
     const listEl = document.getElementById('lbWorldList');
     if (!listEl) return;
 
     const list = filteredSortedWorlds();
+    renderTagFilters();
     let html = '';
+    const createFolderBtn = document.getElementById('lbNewFolderBtn');
+    if (createFolderBtn) createFolderBtn.disabled = !FolderStore.isReady();
+    if (folderLoadError) html += '<div class="lb-list-empty" role="status">Folders and tags could not be loaded. Reopen Lorebooks to retry. Your lorebooks are still available.</div>';
 
     if (creatingNew) {
         html += `
@@ -608,39 +729,25 @@ function renderWorldList() {
     if (list.length === 0 && !creatingNew) {
         html += worldsList.length === 0
             ? `<div class="lb-list-empty">No lorebooks yet.<br>Create or import one to start.</div>`
-            : `<div class="lb-list-empty">No matches for "${esc(worldSearch)}".</div>`;
+            : '<div class="lb-list-empty">No lorebooks match the current filters.</div>';
     }
 
     const q = worldSearch.trim().toLowerCase();
-    const usingChats = usedByMode === 'chats';
-    for (const w of list) {
-        const used = usedByCount(w.file_id); // null while chat index loads
-        const count = entryCountOf(w);
-        const active = w.file_id === currentWorld ? ' active' : '';
-        // Only flag a linked-character match when the query didn't already hit the book name (file_id).
-        const nameHit = q && w.file_id.toLowerCase().includes(q);
-        const nameHits = nameHit ? [] : matchedNamesFor(w.file_id, q);
-        const meta = [];
-        if (count === null) meta.push('...');
-        else meta.push(`${count} ${count === 1 ? 'entry' : 'entries'}`);
-        if (used === null) meta.push('...');
-        else if (used > 0) meta.push(usingChats ? `${used} chat${used === 1 ? '' : 's'}` : `${used} linked`);
-        const viaLine = nameHits.length
-            ? `<span class="lb-world-via" title="${esc(nameHits.join(', '))}"><i class="fa-solid fa-${usingChats ? 'comments' : 'user'}"></i> via ${esc(nameHits.join(', '))}</span>`
-            : '';
-        const badge = (used && used > 0)
-            ? `<span class="lb-world-linked-badge" title="${used} ${usingChats ? `bound chat${used === 1 ? '' : 's'}` : `linked character${used === 1 ? '' : 's'}`}"><i class="fa-solid fa-${usingChats ? 'comments' : 'link'}"></i>${used}</span>`
-            : '';
-        html += `
-            <button class="lb-world-row${active}${nameHits.length ? ' char-match' : ''}" data-action="select-world" data-world="${esc(w.file_id)}" title="${esc(w.file_id)}">
-                <i class="fa-solid fa-book lb-world-icon"></i>
-                <span class="lb-world-info">
-                    <span class="lb-world-name">${esc(w.file_id)}</span>
-                    <span class="lb-world-meta">${esc(meta.join('  ·  '))}</span>
-                    ${viaLine}
-                </span>
-                ${badge}
-            </button>`;
+    for (const group of groupedWorlds(list)) {
+        const id = esc(group.id);
+        const count = hasWorldFilters() ? `${group.worlds.length} / ${group.total}` : group.total;
+        html += `<section class="lb-folder-group">
+            <div class="lb-folder-head">
+                <button class="lb-folder-toggle" data-action="toggle-folder" data-folder="${id}" aria-expanded="${group.expanded}" ${hasWorldFilters() || !FolderStore.isReady() ? 'disabled' : ''} title="${hasWorldFilters() ? 'Clear filters to collapse folders' : esc(group.name)}">
+                    <i class="fa-solid fa-chevron-${group.expanded ? 'down' : 'right'} lb-folder-chevron" aria-hidden="true"></i>
+                    <i class="fa-solid fa-folder${group.expanded ? '-open' : ''}" aria-hidden="true"></i>
+                    <span class="lb-folder-name">${esc(group.name)}</span><span class="lb-folder-count">${count}</span>
+                </button>
+                ${group.id ? `<button class="lb-folder-action" data-action="rename-folder" data-folder="${id}" title="Rename folder" aria-label="Rename ${esc(group.name)}"><i class="fa-solid fa-pen"></i></button>
+                <button class="lb-folder-action" data-action="delete-folder" data-folder="${id}" title="Delete folder" aria-label="Delete ${esc(group.name)}"><i class="fa-solid fa-trash"></i></button>` : ''}
+            </div>
+            ${group.expanded ? `<div class="lb-folder-worlds">${group.worlds.map(w => renderWorldRow(w, q)).join('') || '<div class="lb-folder-empty">No lorebooks in this folder.</div>'}</div>` : ''}
+        </section>`;
     }
 
     listEl.innerHTML = html;
@@ -654,6 +761,139 @@ function renderWorldList() {
 // ========================================
 // CONTENT PANE
 // ========================================
+
+function closeOrganizeDialog() {
+    const modal = document.getElementById('lbOrganizeModal');
+    const wasVisible = modal?.classList.contains('visible');
+    modal?.classList.remove('visible');
+    organizeJob = null;
+    if (wasVisible) document.getElementById('lbNewFolderBtn')?.focus();
+}
+
+function renderTagSuggestions() {
+    const input = document.getElementById('lbTagName');
+    const query = input.value.trim().toLowerCase();
+    const selected = new Set(organizeTags.map(tag => tag.toLowerCase()));
+    document.getElementById('lbTagSuggestions').innerHTML = getWorldTagOptions()
+        .filter(t => t.count > 0 && !selected.has(t.key) && t.key.includes(query))
+        .map(t => `<button type="button" class="lb-tag-suggestion" data-add-tag="${esc(t.tag)}">${esc(t.tag)}</button>`).join('');
+}
+
+function renderTagDraft() {
+    document.getElementById('lbTagDraft').innerHTML = organizeTags.map(tag => `<span class="lb-tag-edit-chip">
+        <span>${esc(tag)}</span><button type="button" data-remove-tag="${esc(tag)}" aria-label="Remove tag ${esc(tag)}">&times;</button>
+    </span>`).join('') || '<span class="lb-tag-empty">No tags</span>';
+    renderTagSuggestions();
+}
+
+function addOrganizeTag(value = document.getElementById('lbTagName').value) {
+    if (organizeBusy) return false;
+    const tag = value.trim();
+    if (!tag) return true;
+    if (tag.length > 80) { CoreAPI.showToast('Tags must contain between 1 and 80 characters', 'warning'); return false; }
+    const key = tag.toLowerCase();
+    const canonical = getWorldTagOptions().find(t => t.key === key)?.tag || tag;
+    if (!organizeTags.some(t => t.toLowerCase() === key)) organizeTags.push(canonical);
+    document.getElementById('lbTagName').value = '';
+    renderTagDraft();
+    document.getElementById('lbTagName').focus();
+    return true;
+}
+
+function openOrganizeDialog(type, value = '') {
+    if (!FolderStore.isReady() || organizeBusy) return;
+    const folder = FolderStore.getFolders().find(f => f.id === value);
+    if (type === 'rename' && !folder) return;
+    organizeJob = { type, value };
+    const moving = type === 'move';
+    const tagging = type === 'tags';
+    document.getElementById('lbOrganizeTitle').textContent = tagging ? 'Edit lorebook tags' : moving ? 'Move lorebook' : type === 'rename' ? 'Rename folder' : 'New folder';
+    const name = document.getElementById('lbOrganizeName');
+    name.value = folder?.name || '';
+    name.required = !moving && !tagging;
+    for (const id of ['lbOrganizeName', 'lbOrganizeNameLabel']) document.getElementById(id).classList.toggle('hidden', moving || tagging);
+    for (const id of ['lbOrganizeTarget', 'lbOrganizeTargetLabel']) document.getElementById(id).classList.toggle('hidden', !moving);
+    const target = document.getElementById('lbOrganizeTarget');
+    target.innerHTML = '<option value="">Uncategorized</option>' + FolderStore.getFolders()
+        .map(f => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join('');
+    target.value = moving ? FolderStore.folderFor(value) : '';
+    document.getElementById('lbOrganizeTags').classList.toggle('hidden', !tagging);
+    organizeTags = tagging ? FolderStore.getTags(value) : [];
+    document.getElementById('lbTagName').value = '';
+    document.getElementById('lbTagName').disabled = false;
+    if (tagging) renderTagDraft();
+    document.getElementById('lbOrganizeHint').textContent = tagging ? `Tags for "${value}"` : moving ? `Move "${value}" to the selected folder. Its bindings stay the same.` : '';
+    const apply = document.getElementById('lbOrganizeApplyBtn');
+    apply.textContent = tagging ? 'Save tags' : moving ? 'Move' : type === 'rename' ? 'Rename' : 'Create';
+    apply.disabled = false;
+    document.getElementById('lbOrganizeModal').classList.add('visible');
+    const job = organizeJob;
+    requestAnimationFrame(() => {
+        if (organizeJob !== job) return;
+        (tagging ? document.getElementById('lbTagName') : moving ? target : name).focus();
+        if (!moving && !tagging) name.select();
+    });
+}
+
+async function applyOrganization() {
+    if (!organizeJob || organizeBusy) return;
+    const job = organizeJob;
+    if (job.type === 'tags' && !addOrganizeTag()) return;
+    const tags = [...organizeTags];
+    const name = document.getElementById('lbOrganizeName').value;
+    const target = document.getElementById('lbOrganizeTarget').value;
+    organizeBusy = true;
+    const apply = document.getElementById('lbOrganizeApplyBtn');
+    apply.disabled = true;
+    document.getElementById('lbTagName').disabled = true;
+    try {
+        if (job.type === 'create') {
+            await FolderStore.createFolder(name);
+            worldSearch = '';
+            selectedWorldTags.clear();
+            untaggedOnly = false;
+            document.getElementById('lbWorldSearch').value = '';
+        }
+        else if (job.type === 'rename') await FolderStore.renameFolder(job.value, name);
+        else {
+            if (!worldsList.some(w => w.file_id === job.value)) throw new Error('Lorebook no longer exists');
+            if (job.type === 'tags') await FolderStore.setTags(job.value, tags);
+            else await FolderStore.moveWorld(job.value, target);
+        }
+        if (organizeJob === job) closeOrganizeDialog();
+        renderWorldList();
+    } catch (e) {
+        CoreAPI.showToast(e.message || 'Could not save folders. Please try again.', 'error');
+    } finally {
+        organizeBusy = false;
+        apply.disabled = false;
+        document.getElementById('lbTagName').disabled = false;
+    }
+}
+
+async function deleteLorebookFolder(id) {
+    const folder = FolderStore.getFolders().find(f => f.id === id);
+    if (!folder) return;
+    const count = worldsList.filter(w => FolderStore.folderFor(w.file_id) === id).length;
+    const ok = await CoreAPI.showConfirm({
+        title: 'Delete folder?',
+        message: `Delete "${esc(folder.name)}"? Its ${count} lorebook${count === 1 ? '' : 's'} will move to Uncategorized.`,
+        confirmLabel: 'Delete folder', cancelLabel: 'Cancel',
+    });
+    if (!ok) return;
+    try {
+        await FolderStore.deleteFolder(id);
+        renderWorldList();
+    } catch (e) { CoreAPI.showToast(e.message || 'Could not delete folder', 'error'); }
+}
+
+async function toggleLorebookFolder(id) {
+    if (hasWorldFilters()) return;
+    try {
+        await FolderStore.toggleFolder(id);
+        renderWorldList();
+    } catch (e) { CoreAPI.showToast(e.message || 'Could not save folder state', 'error'); }
+}
 
 // Mobile: toggle a class on .lb-body so CSS can swap between the world list and the editor.
 function setEditingMode(on) {
@@ -680,6 +920,7 @@ function renderEmptyContent() {
 }
 
 async function selectWorld(fileId) {
+    const loadToken = ++worldLoadToken;
     if (fileId === currentWorld) return;
     if (dirty) {
         const ok = await CoreAPI.showConfirm({
@@ -689,12 +930,13 @@ async function selectWorld(fileId) {
             cancelLabel: 'Keep Editing',
             danger: true,
         });
-        if (!ok) return;
+        if (!ok || loadToken !== worldLoadToken) return;
     }
 
     // No loader on switch: the load is sub-second, so the previous content simply stays until
     // the editor re-renders, which is smoother than flashing a spinner.
     const data = await CoreAPI.getWorldInfoData(fileId);
+    if (loadToken !== worldLoadToken) return;
     if (!data) {
         CoreAPI.showToast('Failed to load lorebook', 'error');
         renderEmptyContent();
@@ -705,6 +947,11 @@ async function selectWorld(fileId) {
     diskSnapshot = JSON.stringify(data);
     if (!data.entries || typeof data.entries !== 'object') data.entries = {};
 
+    const folder = FolderStore.folderFor(fileId);
+    if (FolderStore.isReady() && FolderStore.isCollapsed(folder)) {
+        try { await FolderStore.toggleFolder(folder); }
+        catch { /* The editor can still open if saving the expanded state fails. */ }
+    }
     currentWorld = fileId;
     workingWorld = JSON.parse(JSON.stringify(data));
     // Key-canonical uid repair: handlers find entries via the body uid, but third-party files
@@ -748,7 +995,7 @@ function lbNavAllowed() {
 // Up/down load the prev/next lorebook (clamped; first press picks an end); selectWorld owns the
 // unsaved-edits guard. After it switches, keep the now-active sidebar row in view.
 function moveActiveWorld(dir) {
-    const worlds = filteredSortedWorlds();
+    const worlds = visibleSortedWorlds();
     if (!worlds.length) return;
     let idx = worlds.findIndex(w => w.file_id === currentWorld);
     if (idx === -1) idx = dir > 0 ? 0 : worlds.length - 1;
@@ -796,7 +1043,7 @@ function renderEditor() {
     const entries = sortedEntries();
     const total = Object.keys(workingWorld.entries).length;
     const displayName = currentWorld; // the filename (file_id) is the canonical name, matching ST
-    const usingChats = usedByMode === 'chats';
+    if (!chatIndexLoaded && !chatIndexLoading && !chatIndexFailed) ensureChatIndex();
 
     el.innerHTML = `
         <div class="lb-editor">
@@ -807,8 +1054,14 @@ function renderEditor() {
                         <button class="lb-save-btn${dirty ? ' dirty' : ''}" id="lbSaveBtn" data-action="save" ${dirty ? '' : 'disabled'} title="Save changes">
                             <i class="fa-solid fa-floppy-disk"></i> <span>${dirty ? 'Save *' : 'Saved'}</span>
                         </button>
-                        <button class="lb-link-btn lb-action-desktop" data-action="${usingChats ? 'bind-chats' : 'link-chars'}" title="${usingChats ? 'Bind this lorebook to chats' : 'Link this lorebook to characters'}">
-                            <i class="fa-solid fa-${usingChats ? 'comments' : 'link'}"></i> <span>${usingChats ? 'Bind' : 'Link'}</span>
+                        <button class="lb-link-btn lb-action-desktop" data-action="link-chars" title="Set this lorebook as the primary lorebook on characters">
+                            <i class="fa-solid fa-link"></i> <span>Link</span>
+                        </button>
+                        <button class="lb-link-btn lb-action-desktop" data-action="link-aux" title="Manage which characters use this as an additional lorebook">
+                            <i class="fa-solid fa-book-medical"></i> <span>Additional</span>
+                        </button>
+                        <button class="lb-link-btn lb-action-desktop" data-action="bind-chats" title="Bind this lorebook to chats">
+                            <i class="fa-solid fa-comments"></i> <span>Chats</span>
                         </button>
                         <button class="lb-icon-btn lb-action-desktop" data-action="rename-world" title="Rename"><i class="fa-solid fa-pen"></i></button>
                         <button class="lb-icon-btn lb-action-desktop" data-action="duplicate-world" title="Duplicate"><i class="fa-solid fa-clone"></i></button>
@@ -817,7 +1070,9 @@ function renderEditor() {
                         <div class="lb-editor-overflow lb-action-mobile">
                             <button class="lb-icon-btn" data-action="editor-overflow" aria-label="More actions" title="More"><i class="fa-solid fa-ellipsis-vertical"></i></button>
                             <div class="lb-split-menu lb-editor-overflow-menu hidden" id="lbEditorOverflowMenu">
-                                <button class="dropdown-item" data-action="${usingChats ? 'bind-chats' : 'link-chars'}"><i class="fa-solid fa-${usingChats ? 'comments' : 'link'}"></i> ${usingChats ? 'Bind to chats' : 'Link to characters'}</button>
+                                <button class="dropdown-item" data-action="link-chars"><i class="fa-solid fa-link"></i> Link to characters</button>
+                                <button class="dropdown-item" data-action="link-aux"><i class="fa-solid fa-book-medical"></i> Additional lorebooks</button>
+                                <button class="dropdown-item" data-action="bind-chats"><i class="fa-solid fa-comments"></i> Bind to chats</button>
                                 <button class="dropdown-item" data-action="rename-world"><i class="fa-solid fa-pen"></i> Rename</button>
                                 <button class="dropdown-item" data-action="duplicate-world"><i class="fa-solid fa-clone"></i> Duplicate</button>
                                 <button class="dropdown-item" data-action="export-world"><i class="fa-solid fa-file-export"></i> Export JSON</button>
@@ -828,7 +1083,7 @@ function renderEditor() {
                 </div>
                 <div class="lb-editor-meta">
                     <span class="lb-meta-pill"><i class="fa-solid fa-list"></i> ${total} ${total === 1 ? 'entry' : 'entries'}</span>
-                    ${usingChats ? renderBoundChatChips() : renderLinkedChips(linkedMap.get(currentWorld) || [], auxMap.get(currentWorld) || [])}
+                    ${renderRelationMeta()}
                 </div>
             </div>
 
@@ -891,12 +1146,13 @@ function renderLinkedChips(linked, aux = []) {
                 : '<span class="lb-rel-badge lb-primary-badge" title="Primary lorebook"><i class="fa-solid fa-book-bookmark"></i></span>'}
             <button class="lb-linked-chip-x" data-action="${l.aux ? 'unlink-aux' : 'unlink-char'}" data-avatar="${esc(l.avatar)}" title="${l.aux ? `Remove this additional lorebook from ${esc(l.name)}` : `Unlink this lorebook from ${esc(l.name)}`}">&times;</button>
         </span>`).join('');
-    const more = rows.length > 8 ? `<button class="lb-linked-more" data-action="manage-links" title="See all ${rows.length} uses">+${rows.length - 8} more</button>` : '';
+    const more = rows.length > 8 ? `<button class="lb-linked-more" data-action="manage-char-links" title="See all ${rows.length} character links">+${rows.length - 8} more</button>` : '';
     return `<span class="lb-linked-chips">${chips}${more}</span>`;
 }
 
-// Chats-lens equivalent of renderLinkedChips: the chats bound to the current world.
+// Chats bound to the current world, shown alongside character relationships.
 function renderBoundChatChips() {
+    if (chatIndexFailed) return `<span class="lb-meta-pill subtle"><i class="fa-solid fa-link-slash"></i> Couldn't load chat bindings</span>`;
     if (!chatIndexLoaded) return `<span class="lb-meta-pill subtle"><i class="fa-solid fa-spinner fa-spin"></i> Loading chats...</span>`;
     const bound = chatBoundMap.get(currentWorld) || [];
     if (!bound.length) return `<span class="lb-meta-pill subtle"><i class="fa-solid fa-link-slash"></i> No chats use this lorebook</span>`;
@@ -912,8 +1168,13 @@ function renderBoundChatChips() {
             <button class="lb-linked-chip-x" data-action="unbind-chat" data-idx="${i}" title="Unbind this lorebook from the chat">&times;</button>
         </span>`;
     }).join('');
-    const more = bound.length > 8 ? `<button class="lb-linked-more" data-action="manage-links" title="See all ${bound.length} bound chats">+${bound.length - 8} more</button>` : '';
+    const more = bound.length > 8 ? `<button class="lb-linked-more" data-action="manage-chat-links" title="See all ${bound.length} bound chats">+${bound.length - 8} more</button>` : '';
     return `<span class="lb-linked-chips">${chips}${more}</span>`;
+}
+
+function renderRelationMeta() {
+    return renderLinkedChips(linkedMap.get(currentWorld) || [], auxMap.get(currentWorld) || [])
+        + renderBoundChatChips();
 }
 
 // ========================================
@@ -1213,7 +1474,7 @@ function markDirty() {
 function updateSaveButton() {
     const btn = document.getElementById('lbSaveBtn');
     if (!btn) return;
-    btn.disabled = !dirty;
+    btn.disabled = !dirty || worldSaveInProgress;
     btn.classList.toggle('dirty', dirty);
     const label = btn.querySelector('span');
     if (label) label.textContent = dirty ? 'Save *' : 'Saved';
@@ -1313,7 +1574,9 @@ async function confirmDiskDivergence(name) {
 }
 
 async function saveWorld() {
-    if (!dirty || !currentWorld) return;
+    if (!dirty || !currentWorld || worldSaveInProgress) return;
+    const name = currentWorld;
+    const editor = workingWorld;
     // An entry with secondary keys is selective in the V2/V3 spec; keep the flag in sync on save.
     for (const e of Object.values(workingWorld.entries || {})) {
         if (e && Array.isArray(e.keysecondary) && e.keysecondary.length && !e.selective) {
@@ -1321,24 +1584,30 @@ async function saveWorld() {
         }
     }
     const btn = document.getElementById('lbSaveBtn');
+    worldSaveInProgress = true;
     if (btn) { btn.disabled = true; btn.classList.add('saving'); }
-    if (!(await confirmDiskDivergence(currentWorld))) {
-        if (btn) { btn.disabled = false; btn.classList.remove('saving'); }
-        return;
-    }
-    const ok = await CoreAPI.saveWorldInfoData(currentWorld, workingWorld);
-    if (btn) btn.classList.remove('saving');
-    if (ok) {
-        originalSnapshot = JSON.stringify(workingWorld);
-        diskSnapshot = originalSnapshot;
-        dirty = false;
-        entryCountCache.set(currentWorld, Object.keys(workingWorld.entries).length);
-        updateSaveButton();
-        renderWorldList();
+    try {
+        if (!(await confirmDiskDivergence(name))) return;
+        if (currentWorld !== name || workingWorld !== editor) return;
+        // Keep the exact submitted snapshot: typing during the request must remain unsaved.
+        const submitted = JSON.stringify(editor);
+        const ok = await CoreAPI.saveWorldInfoData(name, JSON.parse(submitted));
+        if (!ok) throw new Error('Lorebook write failed');
+        entryCountCache.set(name, Object.keys(JSON.parse(submitted).entries).length);
+        if (currentWorld === name && workingWorld === editor) {
+            originalSnapshot = submitted;
+            diskSnapshot = submitted;
+            dirty = JSON.stringify(editor) !== submitted;
+            renderWorldList();
+        }
         CoreAPI.showToast('Lorebook saved. Reload SillyTavern or re-select the character to apply.', 'success', 5000);
-    } else {
-        if (btn) btn.disabled = false;
+    } catch (err) {
+        console.error('[LorebookManager] Save failed:', err);
         CoreAPI.showToast('Failed to save lorebook', 'error');
+    } finally {
+        worldSaveInProgress = false;
+        if (btn) btn.classList.remove('saving');
+        updateSaveButton();
     }
 }
 
@@ -1406,7 +1675,12 @@ async function doRename(oldName, newName) {
     if (dirty) {
         if (!(await confirmDiskDivergence(oldName))) { renderEditor(); return; }
         const saved = await CoreAPI.saveWorldInfoData(oldName, workingWorld);
-        if (saved) { originalSnapshot = JSON.stringify(workingWorld); diskSnapshot = originalSnapshot; dirty = false; }
+        if (!saved) {
+            CoreAPI.showToast('Could not save pending edits. Lorebook was not renamed.', 'error');
+            renderEditor();
+            return;
+        }
+        originalSnapshot = JSON.stringify(workingWorld); diskSnapshot = originalSnapshot; dirty = false;
     }
     // Snapshot the characters linked to the OLD name before the rename, so we can
     // offer to re-point them (ST's own rename does this; copy+delete alone dangles them).
@@ -1415,6 +1689,8 @@ async function doRename(oldName, newName) {
     const ok = await CoreAPI.renameWorldInfo(oldName, newName);
     if (!ok) { CoreAPI.showToast('Rename failed', 'error'); renderEditor(); return; }
     currentWorld = newName;
+    try { await FolderStore.renameWorld(oldName, newName); }
+    catch { CoreAPI.showToast('Lorebook renamed, but its folder and tags could not be updated. Please set them again.', 'warning'); }
 
     // Additional-book references (charLore) auto-sweep like ST's own rename does; no confirm.
     // null = bridge unreachable, so surviving references get a caveat instead.
@@ -1428,7 +1704,7 @@ async function doRename(oldName, newName) {
     // Chat-bound links (chat_metadata.world_info) aren't swept on rename; the success toast warns
     // the user to rebind. Suppressed only when the Chats index is built and shows zero (no scan here).
     const knownZeroChats = chatIndexLoaded && !(chatBoundMap.get(oldName) || []).length;
-    const chatCaveat = (knownZeroChats ? '' : ' Bound chats keep the old name, rebind from the Chats lens.') + auxNote;
+    const chatCaveat = (knownZeroChats ? '' : ' Bound chats keep the old name, rebind using Chats.') + auxNote;
 
     // Re-point primary character links (data.extensions.world) from old to new name.
     if (linkedBefore.length) {
@@ -1519,6 +1795,8 @@ async function deleteWorld() {
 
     const done = await CoreAPI.deleteWorldInfo(deletedName);
     if (!done) { CoreAPI.showToast('Delete failed', 'error'); return; }
+    try { await FolderStore.removeWorld(deletedName); }
+    catch { CoreAPI.showToast('Lorebook deleted, but its saved folder and tags could not be cleared.', 'warning'); }
 
     let cleared = 0;
     if (clearLinks) {
@@ -1628,7 +1906,7 @@ async function unbindChatFromCurrentWorld(c) {
     const success = await CoreAPI.setChatBoundWorld(charRef, c.file_name, '');
     if (!success) { CoreAPI.showToast('Failed to unbind (the chat may be open in SillyTavern)', 'error'); return; }
     // Update the in-memory reverse index, then re-render.
-    const list = (chatBoundMap.get(currentWorld) || []).filter(x => x.file_name !== c.file_name);
+    const list = (chatBoundMap.get(currentWorld) || []).filter(x => x.file_name !== c.file_name || x.avatar !== c.avatar);
     if (list.length) chatBoundMap.set(currentWorld, list);
     else chatBoundMap.delete(currentWorld);
     renderEditor();
@@ -1697,16 +1975,18 @@ async function importFiles(fileList) {
 // LINK PICKER (characters: primary link, chats: chat-bound lore)
 // ========================================
 
-function openLinkPicker(initialMode = 'characters', { manage = false } = {}) {
+function openLinkPicker(initialMode = 'characters', { manage = false, auxManage = false } = {}) {
     if (!currentWorld) return;
     linkBook = currentWorld;
     linkMode = initialMode === 'chats' ? 'chats' : 'characters';
     linkManageMode = manage;
-    linkSelection = new Set();
+    linkAuxManage = auxManage && !manage && linkMode === 'characters';
     linkSearch = '';
     linkHideLinked = false;
-    linkAsAux = false;
+    linkAsAux = linkAuxManage;
     linkAuxSet = new Set((auxMap.get(linkBook) || []).map(a => a.avatar));
+    // Additional management starts from the current membership: check to keep, uncheck to remove.
+    linkSelection = linkAuxManage ? new Set(linkAuxSet) : new Set();
     linkPlaylistUid = '';
     linkPlaylistSet = null;
     linkChatChar = null;
@@ -1720,13 +2000,16 @@ function openLinkPicker(initialMode = 'characters', { manage = false } = {}) {
     const nameEl = document.getElementById('lbLinkBookName');
     if (nameEl) nameEl.textContent = currentWorld;
     const verbEl = document.getElementById('lbLinkVerb');
-    if (verbEl) verbEl.textContent = manage ? 'Manage links for' : 'Link';
+    if (verbEl) verbEl.textContent = linkAuxManage ? 'Additional for' : manage ? 'Manage links for' : linkMode === 'chats' ? 'Bind' : 'Link';
     const searchEl = document.getElementById('lbLinkSearch');
     if (searchEl) searchEl.value = '';
     const hideEl = document.getElementById('lbLinkHideLinked');
     if (hideEl) hideEl.checked = false;
     const auxEl = document.getElementById('lbLinkAsAux');
-    if (auxEl) auxEl.checked = false;
+    if (auxEl) auxEl.checked = linkAsAux;
+    if (linkAuxManage && !CoreAPI.canEditCharLore()) {
+        CoreAPI.showToast('Open the Library from SillyTavern to edit additional lorebooks', 'warning');
+    }
     populateLinkPlaylistFilter();
     document.getElementById('lbLinkHead')?.classList.remove('lb-toolbar-hidden', 'lb-pinned'); // start expanded + unpinned; a prior session may have left either
     syncLinkModeUI();
@@ -1743,7 +2026,9 @@ function setLinkApplyButton() {
     if (!btn) return;
     btn.classList.toggle('cl-btn-danger', linkManageMode);
     btn.classList.toggle('cl-btn-primary', !linkManageMode);
-    btn.innerHTML = linkManageMode
+    btn.innerHTML = linkAuxManage
+        ? `<i class="fa-solid fa-book-medical"></i> Update additional <span id="lbLinkApplyCount"></span>`
+        : linkManageMode
         ? `<i class="fa-solid fa-link-slash"></i> Unlink selected <span id="lbLinkApplyCount"></span>`
         : linkAsAux
             ? `<i class="fa-solid fa-plus"></i> Add as additional <span id="lbLinkApplyCount"></span>`
@@ -1764,7 +2049,13 @@ function syncLinkModeUI() {
     syncLinkPlaylistVisibility();
     // The additional toggle only makes sense when picking characters to add; it also
     // needs the ST window (the only charLore write path).
-    if (auxWrap) auxWrap.style.display = (linkMode === 'characters' && !linkManageMode && charLoreEditable) ? '' : 'none';
+    if (auxWrap) auxWrap.style.display = (linkMode === 'characters' && !linkManageMode && !linkAuxManage && charLoreEditable) ? '' : 'none';
+    if (linkAuxManage) {
+        if (hint) hint.innerHTML = `Checked characters keep <strong>${esc(linkBook)}</strong> as an <strong>additional</strong> lorebook. Uncheck to remove it. The primary lorebook on the card is not changed.`;
+        if (searchEl) searchEl.placeholder = 'Search characters...';
+        if (hideWrap) hideWrap.style.display = 'none';
+        return;
+    }
     if (linkManageMode) {
         const what = linkMode === 'chats' ? 'chats bound to' : 'characters using';
         if (hint) hint.innerHTML = `Select the ${what} <strong>${esc(linkBook)}</strong> to unlink, then Unlink selected. Primary and additional uses are both removed.`;
@@ -1783,8 +2074,8 @@ function syncLinkModeUI() {
     } else {
         if (hint) {
             hint.innerHTML = linkChatChar
-                ? `Bind <strong>${esc(linkBook)}</strong> to chats of <strong>${esc(linkChatChar.name || linkChatChar.avatar)}</strong> (writes to the chat, not the card).`
-                : `Pick a character, then choose which of their chats to bind <strong>${esc(linkBook)}</strong> to (writes to the chat, not the card).`;
+                ? `Bind <strong>${esc(linkBook)}</strong> to chats of <strong>${esc(linkChatChar.name || linkChatChar.avatar)}</strong>. One chat holds one lorebook. A chat that is open in SillyTavern is locked.`
+                : `Pick a character, then choose which of their chats to bind <strong>${esc(linkBook)}</strong> to. Group chats are not changed here.`;
         }
         if (searchEl) searchEl.placeholder = linkChatChar ? 'Search chats...' : 'Search characters...';
         if (hideWrap) hideWrap.style.display = 'none';
@@ -1928,9 +2219,12 @@ function charLinkRowHtml(c) {
     const isThis = cur === linkBook;
     const hasOther = cur && cur !== linkBook;
     const isAux = linkAuxSet.has(c.avatar);
+    // Additional membership does not replace the card's primary lorebook, so the
+    // primary-conflict warning only belongs on the primary Link picker.
+    const warnOtherPrimary = hasOther && !linkAuxManage && !linkAsAux;
     let status = isThis
         ? `<span class="lb-link-status current"><i class="fa-solid fa-check"></i> Linked here</span>`
-        : hasOther
+        : warnOtherPrimary
             ? `<span class="lb-link-status other" title="Currently linked to ${esc(cur)}"><i class="fa-solid fa-triangle-exclamation"></i> <span class="lb-link-status-name">${esc(cur)}</span></span>`
             : '';
     if (isAux) status += `<span class="lb-link-status aux" title="Already one of this character's additional lorebooks"><i class="fa-solid fa-plus"></i> Additional here</span>`;
@@ -1978,6 +2272,26 @@ function manageChatVisible() {
     });
 }
 
+// The chat SillyTavern is appending to cannot be rewritten here (the save replaces the whole file).
+function chatOpenInSt(char, fileName) {
+    const target = String(fileName || '').replace(/\.jsonl$/i, '');
+    if (!target || !char?.avatar) return false;
+    try {
+        const ctx = CoreAPI.getHostWindow()?.SillyTavern?.getContext?.();
+        if (!ctx || ctx.groupId) return false;
+        const activeChar = ctx.characters?.[ctx.characterId];
+        if (!activeChar || activeChar.avatar !== char.avatar) return false;
+        const activeChat = String(ctx.chatId || ctx.getCurrentChatId?.() || '').replace(/\.jsonl$/i, '');
+        return !!activeChat && activeChat === target;
+    } catch {
+        return false;
+    }
+}
+
+function boundChatOpenInSt(c) {
+    return chatOpenInSt(c?.char || { avatar: c?.avatar, name: c?.charName }, c?.file_name);
+}
+
 // Manage-chats: every chat bound to this book, across characters (no per-char drill-down).
 function renderManageChatList(listEl) {
     clearVList(); // bounded list (one book's bound chats); render in full
@@ -1989,6 +2303,16 @@ function renderManageChatList(listEl) {
     listEl.innerHTML = items.map(c => {
         const key = `${c.avatar}:${c.file_name}`;
         const name = (c.file_name || '').replace(/\.jsonl$/i, '');
+        const locked = boundChatOpenInSt(c);
+        if (locked) {
+            return `
+            <button class="lb-link-row locked" data-action="link-chat-locked" title="Open in SillyTavern">
+                <i class="fa-solid fa-lock lb-link-chat-icon"></i>
+                <img class="lb-link-avatar" src="${esc(CoreAPI.getCharacterAvatarStThumbUrl(c.avatar))}" alt="" loading="lazy">
+                <span class="lb-link-name">${esc(c.charName)}: ${esc(name)}</span>
+                <span class="lb-link-status other">Open in SillyTavern</span>
+            </button>`;
+        }
         return `
             <button class="lb-link-row${linkSelection.has(key) ? ' selected' : ''}" data-action="link-toggle-managechat" data-key="${esc(key)}" title="${esc(name)}">
                 <span class="lb-link-check"><i class="fa-solid fa-check"></i></span>
@@ -2031,18 +2355,21 @@ function renderChatLinkList(listEl) {
         const file = ch.file_name;
         const name = (file || '').replace(/\.jsonl$/i, '');
         const cur = ch.chat_metadata?.world_info || '';
-        const selected = linkSelection.has(file);
+        const locked = chatOpenInSt(linkChatChar, file);
+        const selected = !locked && linkSelection.has(file);
         const isThis = cur === linkBook;
         const hasOther = cur && cur !== linkBook;
         const count = ch.chat_items || ch.mes_count || ch.message_count || 0;
-        const status = isThis
+        const status = locked
+            ? `<span class="lb-link-status other">Open in SillyTavern</span>`
+            : isThis
             ? `<span class="lb-link-status current"><i class="fa-solid fa-check"></i> Bound here</span>`
             : hasOther
                 ? `<span class="lb-link-status other" title="Currently bound to ${esc(cur)}"><i class="fa-solid fa-triangle-exclamation"></i> <span class="lb-link-status-name">${esc(cur)}</span></span>`
                 : '';
         return `
-            <button class="lb-link-row${selected ? ' selected' : ''}" data-action="link-toggle-chat" data-file="${esc(file)}" title="${esc(name)}">
-                <span class="lb-link-check"><i class="fa-solid fa-check"></i></span>
+            <button class="lb-link-row${selected ? ' selected' : ''}${locked ? ' locked' : ''}" data-action="${locked ? 'link-chat-locked' : 'link-toggle-chat'}" data-file="${esc(file)}" title="${esc(locked ? 'Open in SillyTavern' : name)}">
+                ${locked ? '<i class="fa-solid fa-lock lb-link-chat-icon"></i>' : '<span class="lb-link-check"><i class="fa-solid fa-check"></i></span>'}
                 <i class="fa-solid fa-message lb-link-chat-icon"></i>
                 <span class="lb-link-name">${esc(name)}</span>
                 <span class="lb-link-chat-count">${count} msg</span>
@@ -2085,8 +2412,16 @@ function updateLinkFooter() {
     if (countEl) countEl.textContent = `${linkSelection.size} selected`;
     const applyBtn = document.getElementById('lbLinkApplyBtn');
     const applyCount = document.getElementById('lbLinkApplyCount');
-    if (applyBtn) applyBtn.disabled = linkSelection.size === 0;
-    if (applyCount) applyCount.textContent = linkSelection.size ? `(${linkSelection.size})` : '';
+    if (linkAuxManage) {
+        const diff = auxSelectionDiff();
+        const n = diff.add + diff.remove;
+        if (applyBtn) applyBtn.disabled = n === 0 || !CoreAPI.canEditCharLore();
+        if (applyCount) applyCount.textContent = n ? `(+${diff.add} −${diff.remove})` : '';
+        if (countEl) countEl.textContent = `${linkSelection.size} kept`;
+    } else {
+        if (applyBtn) applyBtn.disabled = linkSelection.size === 0;
+        if (applyCount) applyCount.textContent = linkSelection.size ? `(${linkSelection.size})` : '';
+    }
     // The select toggle only makes sense on a list of selectable rows. Collapse it (display:none)
     // rather than just hiding it, so it doesn't reserve an empty gap above the list (the chats
     // pick-a-character step has no select-all).
@@ -2107,17 +2442,29 @@ function linkVisibleChats() {
 
 // Selection keys of the currently-shown rows (mode-aware: chars / per-char chats / manage-chats).
 // Reads the cached filtered set for characters, so it never re-filters/re-sorts the library.
+function selectableChatFiles() {
+    return linkVisibleChats().filter(ch => !chatOpenInSt(linkChatChar, ch.file_name)).map(ch => ch.file_name);
+}
+
 function linkShownKeys() {
-    if (linkManageMode && linkMode === 'chats') return manageChatVisible().map(c => `${c.avatar}:${c.file_name}`);
-    if (linkMode === 'chats') return linkVisibleChats().map(ch => ch.file_name);
+    if (linkManageMode && linkMode === 'chats') return manageChatVisible().filter(c => !boundChatOpenInSt(c)).map(c => `${c.avatar}:${c.file_name}`);
+    if (linkMode === 'chats') return selectableChatFiles();
     return linkFiltered.map(c => c.avatar);
 }
 
 // Cheap count of shown rows without materializing the key array (keeps the toggle O(1)).
 function linkShownCount() {
-    if (linkManageMode && linkMode === 'chats') return manageChatVisible().length;
-    if (linkMode === 'chats') return linkVisibleChats().length;
+    if (linkManageMode && linkMode === 'chats') return manageChatVisible().filter(c => !boundChatOpenInSt(c)).length;
+    if (linkMode === 'chats') return selectableChatFiles().length;
     return linkFiltered.length;
+}
+
+function auxSelectionDiff() {
+    let add = 0;
+    let remove = 0;
+    for (const avatar of linkSelection) if (!linkAuxSet.has(avatar)) add++;
+    for (const avatar of linkAuxSet) if (!linkSelection.has(avatar)) remove++;
+    return { add, remove };
 }
 
 function syncLinkSelectToggle() {
@@ -2132,7 +2479,9 @@ function syncLinkSelectToggle() {
 }
 
 async function applyLinks() {
-    if (!linkBook || linkSelection.size === 0) return;
+    if (!linkBook) return;
+    if (linkAuxManage) return applyAuxManage();
+    if (linkSelection.size === 0) return;
     if (linkManageMode) return applyUnlinks();
     if (linkMode === 'chats') return applyChatLinks();
     if (linkAsAux) return applyAuxLinks();
@@ -2270,6 +2619,65 @@ async function applyAuxLinks() {
     );
 }
 
+// Additional management: the checked set is the desired membership. Primary card links are not written.
+async function applyAuxManage() {
+    if (!CoreAPI.canEditCharLore()) {
+        CoreAPI.showToast('Open the Library from SillyTavern to edit additional lorebooks', 'warning');
+        return;
+    }
+    const book = linkBook;
+    const chars = CoreAPI.getAllCharacters() || [];
+    const had = new Set((auxMap.get(book) || []).map(a => a.avatar));
+    const toAdd = [...linkSelection].filter(a => !had.has(a));
+    const toRemove = [...had].filter(a => !linkSelection.has(a));
+    if (!toAdd.length && !toRemove.length) {
+        CoreAPI.showToast('No additional-lorebook changes', 'info');
+        return;
+    }
+    if (toRemove.length) {
+        const ok = await CoreAPI.showConfirm({
+            title: 'Update additional lorebooks?',
+            message: toAdd.length
+                ? `Add this lorebook for ${toAdd.length} character${toAdd.length === 1 ? '' : 's'} and remove it from ${toRemove.length}. The primary lorebook on each card stays as it is.`
+                : `Remove this lorebook from ${toRemove.length} ${toRemove.length === 1 ? "character's" : "characters'"} additional lorebooks? The primary lorebook on each card stays as it is.`,
+            confirmLabel: 'Update',
+            cancelLabel: 'Cancel',
+            danger: true,
+        });
+        if (!ok) return;
+    }
+
+    const applyBtn = document.getElementById('lbLinkApplyBtn');
+    const applyBtnHtml = applyBtn?.innerHTML;
+    if (applyBtn) { applyBtn.disabled = true; applyBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Updating...'; }
+
+    let added = 0;
+    let removed = 0;
+    try {
+        for (const avatar of toAdd) {
+            const c = chars.find(x => x.avatar === avatar);
+            if (c && await addAuxBookToChar(c, book)) added++;
+        }
+        for (const avatar of toRemove) {
+            const books = await CoreAPI.getCharAdditionalLorebooks(avatar);
+            const success = await CoreAPI.setCharAdditionalLorebooks(avatar, books.filter(b => b !== book));
+            if (!success) continue;
+            removed++;
+            linkAuxSet.delete(avatar);
+            const list = (auxMap.get(book) || []).filter(l => l.avatar !== avatar);
+            if (list.length) auxMap.set(book, list);
+            else auxMap.delete(book);
+        }
+    } finally {
+        if (applyBtn) { applyBtn.innerHTML = applyBtnHtml; applyBtn.disabled = false; }
+    }
+
+    if (linkBook === book) closeLinkPicker();
+    if (currentWorld) renderEditor();
+    renderWorldList();
+    CoreAPI.showToast(`Additional lorebook: added ${added}, removed ${removed}.`, 'success', 5000);
+}
+
 async function applyChatLinks() {
     if (!linkChatChar || linkSelection.size === 0) return;
     // Apply-time captures: the picker can be closed + reopened elsewhere mid-batch.
@@ -2298,6 +2706,7 @@ async function applyChatLinks() {
 
     const toBind = targets.filter(ch => {
         const cur = ch.chat_metadata?.world_info || '';
+        if (chatOpenInSt(chatChar, ch.file_name)) return false;
         if (cur === book) return false;
         if (skipConflicts && cur && cur !== book) return false;
         return true;
@@ -2328,6 +2737,12 @@ async function applyChatLinks() {
         // Keep the reverse index in sync (only if it's been built) so the editor + sidebar reflect
         // the new bindings without a full refetch.
         if (chatIndexLoaded && newlyBound.length) {
+            for (const [world, chats] of chatBoundMap) {
+                if (world === book) continue;
+                const remaining = chats.filter(c => !newlyBound.some(nb => nb.avatar === c.avatar && nb.file_name === c.file_name));
+                if (remaining.length) chatBoundMap.set(world, remaining);
+                else chatBoundMap.delete(world);
+            }
             const list = chatBoundMap.get(book) || [];
             for (const nb of newlyBound) {
                 if (!list.some(x => x.file_name === nb.file_name && x.avatar === nb.avatar)) list.push(nb);
@@ -2378,7 +2793,7 @@ async function applyUnlinks() {
         if (isChat) {
             for (const key of linkSelection) {
                 const c = manageChatList.find(x => `${x.avatar}:${x.file_name}` === key);
-                if (!c) continue;
+                if (!c || boundChatOpenInSt(c)) continue;
                 const okU = await CoreAPI.setChatBoundWorld(c.char || { avatar: c.avatar, name: c.charName }, c.file_name, '');
                 if (okU) {
                     done++;
@@ -2495,6 +2910,60 @@ function attachEvents() {
     });
 
     document.getElementById('lbNewBtn')?.addEventListener('click', startCreate);
+    document.getElementById('lbNewFolderBtn')?.addEventListener('click', () => openOrganizeDialog('create'));
+    document.getElementById('lbTagFilterBtn')?.addEventListener('click', () => {
+        tagFilterOpen = !tagFilterOpen;
+        renderTagFilters();
+    });
+    document.getElementById('lbTagFilterSearch')?.addEventListener('input', e => {
+        tagFilterSearch = e.target.value;
+        renderTagFilters();
+    });
+    document.getElementById('lbTagMatch')?.addEventListener('change', e => {
+        worldTagMatch = e.target.value === 'any' ? 'any' : 'all';
+        renderWorldList();
+    });
+    document.getElementById('lbUntaggedOnly')?.addEventListener('change', e => {
+        untaggedOnly = e.target.checked;
+        selectedWorldTags.clear();
+        renderWorldList();
+    });
+    document.getElementById('lbTagFilterOptions')?.addEventListener('change', e => {
+        const tag = e.target.dataset.tag;
+        if (tag === undefined) return;
+        if (e.target.checked) selectedWorldTags.add(tag);
+        else selectedWorldTags.delete(tag);
+        untaggedOnly = false;
+        renderWorldList();
+    });
+    document.getElementById('lbClearTagFilters')?.addEventListener('click', () => {
+        selectedWorldTags.clear();
+        untaggedOnly = false;
+        renderWorldList();
+    });
+    for (const id of ['lbOrganizeCloseBtn', 'lbOrganizeCancelBtn']) document.getElementById(id)?.addEventListener('click', closeOrganizeDialog);
+    document.getElementById('lbOrganizeForm')?.addEventListener('submit', e => { e.preventDefault(); applyOrganization(); });
+    document.getElementById('lbAddTagBtn')?.addEventListener('click', () => addOrganizeTag());
+    document.getElementById('lbTagName')?.addEventListener('input', renderTagSuggestions);
+    document.getElementById('lbTagName')?.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addOrganizeTag(); }
+    });
+    document.getElementById('lbOrganizeTags')?.addEventListener('click', e => {
+        if (organizeBusy) return;
+        const add = e.target.closest('[data-add-tag]');
+        const remove = e.target.closest('[data-remove-tag]');
+        if (add) addOrganizeTag(add.dataset.addTag);
+        else if (remove) {
+            organizeTags = organizeTags.filter(tag => tag !== remove.dataset.removeTag);
+            renderTagDraft();
+        }
+    });
+    document.getElementById('lbOrganizeModal')?.addEventListener('click', e => {
+        if (e.target.id === 'lbOrganizeModal') closeOrganizeDialog();
+    });
+    document.getElementById('lbOrganizeModal')?.addEventListener('keydown', e => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeOrganizeDialog(); }
+    });
     // "New" is a split button: the caret reveals secondary create actions (Generate with AI).
     document.getElementById('lbNewCaret')?.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2523,15 +2992,19 @@ function attachEvents() {
         worldSort = e.target.value;
         renderWorldList();
     });
-    // Used-by lens toggle (Characters | Chats) governs sidebar badges/sort + editor usage.
-    document.querySelectorAll('.lb-usedby-opt').forEach(btn => {
-        btn.addEventListener('click', () => setUsedByMode(btn.dataset.mode));
-    });
 
     // Sidebar delegation (world rows + inline new-name input)
     document.getElementById('lbWorldList')?.addEventListener('click', (e) => {
-        const row = e.target.closest('[data-action="select-world"]');
-        if (row) selectWorld(row.dataset.world);
+        const button = e.target.closest('[data-action]');
+        if (!button) return;
+        switch (button.dataset.action) {
+            case 'select-world': selectWorld(button.dataset.world); break;
+            case 'toggle-folder': toggleLorebookFolder(button.dataset.folder); break;
+            case 'rename-folder': openOrganizeDialog('rename', button.dataset.folder); break;
+            case 'delete-folder': deleteLorebookFolder(button.dataset.folder); break;
+            case 'move-world': openOrganizeDialog('move', button.dataset.world); break;
+            case 'edit-tags': openOrganizeDialog('tags', button.dataset.world); break;
+        }
     });
     document.getElementById('lbWorldList')?.addEventListener('keydown', (e) => {
         if (e.target.id === 'lbNewNameInput') {
@@ -2611,6 +3084,11 @@ function attachEvents() {
         const back = e.target.closest('[data-action="link-chat-back"]');
         if (back) { backToCharPick(); return; }
 
+        if (e.target.closest('[data-action="link-chat-locked"]')) {
+            CoreAPI.showToast('This chat is currently open in SillyTavern. Switch away from it before changing its lorebook.', 'warning', 6000);
+            return;
+        }
+
         const charPick = e.target.closest('[data-action="link-pick-char"]');
         if (charPick) { pickLinkChatChar(charPick.dataset.avatar); return; }
 
@@ -2681,8 +3159,10 @@ function onContentClick(e) {
         case 'save': saveWorld(); break;
         case 'rename-world': startRename(); break;
         case 'link-chars': openLinkPicker('characters'); break;
+        case 'link-aux': openLinkPicker('characters', { auxManage: true }); break;
         case 'bind-chats': openLinkPicker('chats'); break;
-        case 'manage-links': openLinkPicker(usedByMode === 'chats' ? 'chats' : 'characters', { manage: true }); break;
+        case 'manage-char-links': openLinkPicker('characters', { manage: true }); break;
+        case 'manage-chat-links': openLinkPicker('chats', { manage: true }); break;
         case 'duplicate-world': duplicateWorld(); break;
         case 'export-world': exportWorld(); break;
         case 'delete-world': deleteWorld(); break;
@@ -2757,6 +3237,7 @@ async function mobileBackToList() {
         });
         if (!ok) return;
     }
+    worldLoadToken++;
     currentWorld = null;
     workingWorld = null;
     dirty = false;
@@ -4408,6 +4889,11 @@ function init() {
     if (!eventsAttached) {
         eventsAttached = true;
         window.registerOverlay?.({
+            id: 'lbOrganizeModal', tier: 6,
+            close: closeOrganizeDialog,
+            visible: el => el.classList.contains('visible'),
+        });
+        window.registerOverlay?.({
             id: 'lbLinkModal',
             tier: 6,
             close: () => closeLinkPicker(),
@@ -4435,9 +4921,10 @@ function init() {
     CoreAPI.debugLog('[Lorebooks] Module initialized');
 }
 
-export { openModal, closeModal };
+export { openModal, closeModal, refreshUsedBy };
 
 export default {
     init,
     openModal,
+    refreshUsedBy,
 };

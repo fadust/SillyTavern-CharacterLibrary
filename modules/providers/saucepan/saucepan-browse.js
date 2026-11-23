@@ -28,6 +28,7 @@ import {
     fetchSaucepanCompanion,
     fetchSaucepanFandoms,
     fetchSaucepanV2Card,
+    fetchSaucepanLorebookList,
     hasSaucepanToken,
     resolveSaucepanImageUrl,
     saucepanCdnUrl,
@@ -1062,6 +1063,14 @@ function openPreviewModal(hit) {
     if (favsEl) favsEl.textContent = formatNumber(getFavCount(hit));
     if (tokensEl) tokensEl.textContent = formatNumber(getTotalTokens(hit));
     if (dateEl) dateEl.textContent = getCreatedDate(hit) || 'Unknown';
+    // Fork: lorebook stat seeded from the listing's lorebook_count.
+    const lorebookStatEl = document.getElementById('saucepanCharLorebookStat');
+    if (lorebookStatEl) {
+        const lorebookCount = Number(hit?.lorebook_count || 0);
+        lorebookStatEl.style.display = lorebookCount > 0 ? '' : 'none';
+        const statCountEl = document.getElementById('saucepanCharLorebooksStatCount');
+        if (statCountEl) statCountEl.textContent = formatNumber(lorebookCount);
+    }
 
     // Tags
     const tagsEl = document.getElementById('saucepanCharTags');
@@ -1086,6 +1095,7 @@ function openPreviewModal(hit) {
         'saucepanCharFirstMsgSection',
         'saucepanCharAltGreetingsSection',
         'saucepanCharGallerySection',
+        'saucepanCharLorebooksSection',
     ]) {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
@@ -1094,6 +1104,8 @@ function openPreviewModal(hit) {
     if (greetingsStat) greetingsStat.style.display = 'none';
     const galleryGrid = document.getElementById('saucepanCharGalleryGrid');
     if (galleryGrid) galleryGrid.innerHTML = '';
+    const lorebookList = document.getElementById('saucepanCharLorebooks');
+    if (lorebookList) lorebookList.innerHTML = '';
 
     // Import button - neutral loading state until the definition resolves.
     setImportButtonState(inLibrary ? 'inLibrary' : 'loading', hit);
@@ -1246,11 +1258,16 @@ async function fetchAndPopulateDetails(hit, token) {
     try {
         // Companion detail is Bearer-authed like every non-CDN saucepan route (cl-helper injects
         // the stored token): it surfaces open_definition (lock state), portraits, the blurb.
-        let companion = hit._fullCompanion || null;
-        if (!companion) {
-            companion = await fetchSaucepanCompanion(charId).catch(() => null);
-        }
+        // Fork: the linked-lorebook metadata rides along in parallel — it is public data and
+        // renders even when no extraction token is present.
+        const [companion, lorebooks] = await Promise.all([
+            hit._fullCompanion
+                ? Promise.resolve(hit._fullCompanion)
+                : fetchSaucepanCompanion(charId).catch(() => null),
+            fetchSaucepanLorebookList(charId),
+        ]);
         if (token !== saucepanDetailFetchToken) return;
+        renderSaucepanLorebooks(lorebooks);
 
         const lockedDef = !!companion && companion.open_definition === false;
 
@@ -1318,6 +1335,8 @@ async function fetchAndPopulateDetails(hit, token) {
         paintBodySection('saucepanCharFirstMsgSection', 'saucepanCharFirstMsg', data.first_mes, name);
         paintBodySection('saucepanCharMesExampleSection', 'saucepanCharMesExample', data.mes_example, name);
         renderAltGreetings(data.alternate_greetings, name);
+        // Fork: re-render with the extracted card's embedded lorebook as a fallback source.
+        renderSaucepanLorebooks(lorebooks, data.character_book);
 
         // Enable import now that a usable definition is confirmed.
         setImportButtonState(isCharInLocalLibrary(hit) ? 'inLibrary' : 'import', hit);
@@ -1329,6 +1348,38 @@ async function fetchAndPopulateDetails(hit, token) {
             renderExtractionUnavailable({});
         }
     }
+}
+
+/**
+ * Fork (Rayas-Tavern): render a companion's linked lorebooks (from the API list) and/or its
+ * embedded character_book into the "Linked Lorebooks" preview section.
+ * @param {Array<{title?: string, name?: string, user_name?: string, entryCount?: number}>} lorebooks
+ * @param {Object} [characterBook] - embedded V2 book, fallback when the API list is empty
+ */
+function renderSaucepanLorebooks(lorebooks, characterBook) {
+    const section = document.getElementById('saucepanCharLorebooksSection');
+    const list = document.getElementById('saucepanCharLorebooks');
+    const countEl = document.getElementById('saucepanCharLorebooksCount');
+    if (!section || !list) return;
+
+    let entries = Array.isArray(lorebooks) ? lorebooks : [];
+    if (!entries.length && characterBook?.entries?.length) {
+        entries = [{ title: characterBook.name || 'Embedded lorebook', entryCount: characterBook.entries.length }];
+    }
+    if (!entries.length) {
+        section.style.display = 'none';
+        list.innerHTML = '';
+        if (countEl) countEl.textContent = '';
+        return;
+    }
+    section.style.display = '';
+    if (countEl) countEl.textContent = `(${entries.length})`;
+    list.innerHTML = entries.map(entry => {
+        const title = entry.title || entry.name || 'Untitled lorebook';
+        const author = entry.user_name ? `<span>by @${escapeHtml(entry.user_name)}</span>` : '';
+        const entriesTag = entry.entryCount ? `<span>${entry.entryCount} entries</span>` : '';
+        return `<div class="saucepan-lorebook-row"><i class="fa-solid fa-book"></i><div><strong>${escapeHtml(title)}</strong>${author}${entriesTag}</div></div>`;
+    }).join('');
 }
 
 function renderAltGreetings(greetings, charName) {
@@ -2197,6 +2248,10 @@ class SaucepanBrowseView extends BrowseView {
                             <i class="fa-solid fa-calendar"></i>
                             <span id="saucepanCharDate">Unknown</span>
                         </div>
+                        <div class="browse-stat" id="saucepanCharLorebookStat" style="display: none;">
+                            <i class="fa-solid fa-book"></i>
+                            <span id="saucepanCharLorebooksStatCount">0</span> lorebooks
+                        </div>
                     </div>
                     <div class="browse-char-tags" id="saucepanCharTags"></div>
                 </div>
@@ -2261,6 +2316,14 @@ class SaucepanBrowseView extends BrowseView {
                         <i class="fa-solid fa-images"></i> Gallery <span class="browse-section-count" id="saucepanCharGalleryLabel"></span>
                     </h3>
                     <div id="saucepanCharGalleryGrid" class="browse-gallery-grid"></div>
+                </div>
+
+                <!-- Fork: Linked Lorebooks -->
+                <div class="browse-char-section" id="saucepanCharLorebooksSection" style="display: none;">
+                    <h3 class="browse-section-title" data-section="saucepanCharLorebooks" data-label="Linked Lorebooks" data-icon="fa-solid fa-book" title="Click to expand">
+                        <i class="fa-solid fa-book"></i> Linked Lorebooks <span class="browse-section-count" id="saucepanCharLorebooksCount"></span>
+                    </h3>
+                    <div id="saucepanCharLorebooks" class="saucepan-lorebooks-list"></div>
                 </div>
             </div>
         </div>

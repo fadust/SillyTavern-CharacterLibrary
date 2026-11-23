@@ -3,12 +3,26 @@ import * as CoreAPI from './core-api.js';
 let isInitialized = false;
 let currentUpdateChecks = new Map(); // fullPath -> { local, remote, diffs }
 let abortController = null;
+let singleCheckController = null;
 let pendingBatchCharacters = [];
 let batchCheckPaused = false;
 let batchCheckRunning = false;
 let batchCheckedCount = 0;
 let batchSelectedAvatars = new Set(); // Characters checked for inclusion in Apply All
 let batchStatusFilter = 'all'; // Active filter: 'all' | 'has-updates' | 'up-to-date' | 'errors' | 'unavailable' | 'applied'
+
+// Persist the export choice alongside an accepted update, retaining local link metadata.
+function preserveDatacatExportSelection(char, remoteData, updatedFields) {
+    const local = char.data?.extensions?.datacat || char.extensions?.datacat;
+    const remote = remoteData?.extensions?.datacat;
+    if (!local?.id || remote?.id !== local.id) return;
+    updatedFields['extensions.datacat'] = {
+        ...local,
+        sourceKind: remote.sourceKind || local.sourceKind || null,
+        definitionSource: remote.definitionSource || local.definitionSource || 'source',
+        variantId: remote.variantId ?? local.variantId ?? '',
+    };
+}
 
 // Base fields to compare (key -> display label) - provider fields merged at init
 const BASE_COMPARABLE_FIELDS = {
@@ -178,6 +192,79 @@ export async function checkSingleCharacter(char) {
     }
 
     await performSingleCheck(char);
+}
+
+/**
+ * Update-check entry point for characters from unsupported/unlinked sources: prompts for a
+ * local character card file (PNG) instead of fetching from an online provider, then runs the
+ * result through the exact same diff/apply pipeline as a normal provider-based check. Works for
+ * any character regardless of provider link status.
+ * @param {Object} char - Character to check
+ */
+export function checkSingleCharacterFromFile(char) {
+    if (!isInitialized) {
+        console.error('[CardUpdates] Module not initialized');
+        return;
+    }
+
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.png,image/png';
+    input.addEventListener('change', async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+
+        showSingleCheckModal(char);
+        document.getElementById('cardUpdateSingleStatus').innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Reading file...';
+        await performSingleCheckFromFile(char, file);
+    });
+    input.click();
+}
+
+/**
+ * Perform update check for a single character against a locally-provided card file.
+ * @param {Object} char - Character to check
+ * @param {File} file - Character card PNG selected by the user
+ */
+async function performSingleCheckFromFile(char, file) {
+    const statusEl = document.getElementById('cardUpdateSingleStatus');
+    const contentEl = document.getElementById('cardUpdateSingleContent');
+    const applyBtn = document.getElementById('cardUpdateSingleApplyBtn');
+
+    try {
+        await CoreAPI.hydrateCharacter(char);
+
+        const arrayBuffer = await file.arrayBuffer();
+        let cardData = CoreAPI.extractCharacterDataFromPng(arrayBuffer);
+        if (!cardData) {
+            statusEl.innerHTML = '<i class="fa-solid fa-exclamation-triangle"></i> No character card data found in that PNG';
+            return;
+        }
+        if (!cardData.data && cardData.name) {
+            cardData = { spec: 'chara_card_v2', spec_version: '2.0', data: cardData };
+        }
+
+        const remoteCard = aliasRemoteCardTags(cardData);
+        const localData = char.data || char;
+        const diffs = compareCards(localData, remoteCard);
+
+        if (diffs.length === 0) {
+            statusEl.innerHTML = '<i class="fa-solid fa-check"></i> File matches the current card - no differences';
+            return;
+        }
+
+        statusEl.innerHTML = `<i class="fa-solid fa-arrow-right-arrow-left"></i> Found ${diffs.length} difference${diffs.length > 1 ? 's' : ''} (from file: ${CoreAPI.escapeHtml(file.name)})`;
+
+        currentUpdateChecks.set(char.avatar, { char, localData, remoteCard, diffs });
+
+        contentEl.innerHTML = renderDiffList(diffs);
+        resolveWorldFileStatus(contentEl, char.avatar).catch(e => console.error('[CardUpdates] World status check failed:', e));
+        applyBtn.disabled = false;
+
+    } catch (error) {
+        console.error('[CardUpdates] File check failed:', error);
+        statusEl.innerHTML = '<i class="fa-solid fa-xmark"></i> Error reading character card file';
+    }
 }
 
 export async function checkAllLinkedCharacters() {
@@ -582,6 +669,10 @@ function showSingleCheckModal(char) {
  * @param {Object} char - Character to check
  */
 async function performSingleCheck(char) {
+    singleCheckController?.abort();
+    const controller = new AbortController();
+    singleCheckController = controller;
+    currentUpdateChecks.delete(char.avatar);
     const statusEl = document.getElementById('cardUpdateSingleStatus');
     const contentEl = document.getElementById('cardUpdateSingleContent');
     const applyBtn = document.getElementById('cardUpdateSingleApplyBtn');
@@ -596,15 +687,23 @@ async function performSingleCheck(char) {
     try {
         // Ensure heavy fields are loaded before comparing card content
         await CoreAPI.hydrateCharacter(char);
+        if (controller.signal.aborted) return;
         
         await provider.refreshRemoteData(linkInfo, {
+            signal: controller.signal,
             onStatus: (msg) => {
+                if (controller.signal.aborted) return;
                 statusEl.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${CoreAPI.escapeHtml(msg)}`;
             },
         });
         
+        if (controller.signal.aborted) return;
         statusEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Fetching remote card...';
-        const remoteCard = aliasRemoteCardTags(await provider.fetchRemoteCard(linkInfo));
+        const remoteCard = aliasRemoteCardTags(await provider.fetchRemoteCard(linkInfo, {
+            interactive: true, signal: controller.signal,
+            onStatus: (msg) => { if (!controller.signal.aborted) statusEl.textContent = msg; },
+        }));
+        if (controller.signal.aborted) return;
         
         if (!remoteCard) {
             statusEl.innerHTML = '<i class="fa-solid fa-exclamation-triangle"></i> Could not fetch remote card data';
@@ -630,8 +729,10 @@ async function performSingleCheck(char) {
         applyBtn.disabled = false;
         
     } catch (error) {
+        if (controller.signal.aborted) return;
         console.error('[CardUpdates] Check failed:', error);
-        statusEl.innerHTML = '<i class="fa-solid fa-xmark"></i> Error checking for updates';
+        statusEl.textContent = error.name === 'AbortError' ? 'Verification cancelled. Your local card is unchanged.'
+            : (error.code || error.classified ? error.message : 'Error checking for updates');
     }
 }
 
@@ -1377,7 +1478,9 @@ function showBatchCheckModal(characters) {
 async function performBatchCheck(characters, allowedFields, startFrom = 0) {
     const progressEl = document.getElementById('cardUpdateBatchProgress');
     
-    abortController = new AbortController();
+    abortController?.abort();
+    const controller = new AbortController();
+    abortController = controller;
     batchCheckRunning = true;
     batchCheckPaused = false;
     updateBatchFooter('checking');
@@ -1386,7 +1489,7 @@ async function performBatchCheck(characters, allowedFields, startFrom = 0) {
     let errors = 0;
     
     for (let i = startFrom; i < characters.length; i++) {
-        if (abortController.signal.aborted || batchCheckPaused) break;
+        if (controller.signal.aborted || batchCheckPaused) break;
         
         const char = characters[i];
         const itemEl = document.querySelector(`.card-update-batch-item[data-avatar="${CSS.escape(char.avatar)}"]`);
@@ -1408,20 +1511,24 @@ async function performBatchCheck(characters, allowedFields, startFrom = 0) {
             const match = CoreAPI.getCharacterProvider(char);
             if (!match) {
                 if (statusEl) statusEl.innerHTML = '<i class="fa-solid fa-exclamation-triangle"></i> No provider';
-                if (itemEl) itemEl.dataset.status = 'errors';
+                if (itemEl) itemEl.dataset.status = 'error';
                 errors++;
                 continue;
             }
 
             await match.provider.refreshRemoteData(match.linkInfo, {
-                signal: abortController.signal,
+                signal: controller.signal,
                 onStatus: statusEl ? (msg) => {
+                    if (controller.signal.aborted) return;
                     statusEl.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${CoreAPI.escapeHtml(msg)}`;
                 } : undefined,
             });
 
-            if (abortController.signal.aborted || batchCheckPaused) break;
-            const remoteCard = aliasRemoteCardTags(await match.provider.fetchRemoteCard(match.linkInfo));
+            if (controller.signal.aborted || batchCheckPaused) break;
+            const remoteCard = aliasRemoteCardTags(await match.provider.fetchRemoteCard(match.linkInfo, {
+                interactive: false, signal: controller.signal,
+            }));
+            if (controller.signal.aborted || batchCheckPaused) break;
             
             if (!remoteCard) {
                 if (statusEl) statusEl.innerHTML = '<i class="fa-solid fa-ghost"></i> Removed / Private';
@@ -1434,6 +1541,7 @@ async function performBatchCheck(characters, allowedFields, startFrom = 0) {
             } else {
                 // Ensure heavy fields are loaded before comparing card content
                 await CoreAPI.hydrateCharacter(char);
+                if (controller.signal.aborted || batchCheckPaused) break;
                 const localData = char.data || char;
 
                 const diffs = compareCards(localData, remoteCard, allowedFields);
@@ -1458,9 +1566,17 @@ async function performBatchCheck(characters, allowedFields, startFrom = 0) {
                 }
             }
         } catch (error) {
+            if (controller.signal.aborted) break;
             console.error('[CardUpdates] Batch check error for:', char.avatar, error);
-            if (statusEl) statusEl.innerHTML = '<i class="fa-solid fa-xmark"></i> Error';
+            if (statusEl) {
+                statusEl.textContent = error.code === 'verification_required' ? 'Verification required'
+                    : (error.code || error.classified ? error.message : 'Error');
+            }
             if (itemEl) itemEl.dataset.status = 'error';
+            currentUpdateChecks.delete(char.avatar);
+            batchSelectedAvatars.delete(char.avatar);
+            const checkbox = itemEl?.querySelector('.card-update-batch-checkbox');
+            if (checkbox) { checkbox.checked = false; checkbox.disabled = true; }
             errors++;
         }
         
@@ -1470,6 +1586,7 @@ async function performBatchCheck(characters, allowedFields, startFrom = 0) {
         updateBatchFilterCounts();
     }
     
+    if (abortController !== controller) return;
     batchCheckRunning = false;
     
     if (batchCheckPaused) {
@@ -1515,9 +1632,9 @@ function viewBatchItemDiffs(avatar) {
 
 async function applyListingName(char, remoteCard) {
     const listingName = remoteCard?._listingName;
-    if (!listingName) return;
+    if (!listingName) return true;
     const match = CoreAPI.getCharacterProvider(char);
-    if (!match) return;
+    if (!match) return false;
     const { provider } = match;
     const extKey = provider.id;
     // Route through applyCardFieldUpdates so the preflight cleans null pollution before the leaf write, and in-memory state stays synced.
@@ -1528,6 +1645,7 @@ async function applyListingName(char, remoteCard) {
         // _lowerListingName is CL search-key state, not part of card data - recompute outside the helper.
         char._lowerListingName = listingName.toLowerCase();
     }
+    return success;
 }
 
 /**
@@ -1568,7 +1686,10 @@ async function applySingleUpdates() {
         if (versionsModule?.autoSnapshotBeforeChange) {
             try { await versionsModule.autoSnapshotBeforeChange(char, 'update'); } catch (_) {}
         }
-        if (hasListingName) await applyListingName(char, remoteCard);
+        if (hasListingName && !await applyListingName(char, remoteCard)) {
+            throw new Error('Failed to save the updated listing name');
+        }
+        preserveDatacatExportSelection(char, remoteData, updatedFields);
         const hasCardFields = Object.keys(updatedFields).length > 0;
         const success = hasCardFields ? await CoreAPI.applyCardFieldUpdates(char.avatar, updatedFields) : true;
         
@@ -1776,13 +1897,18 @@ async function applyAllBatchUpdates() {
             if (versionsModule?.autoSnapshotBeforeChange) {
                 try { await versionsModule.autoSnapshotBeforeChange(char, 'update'); } catch (_) {}
             }
-            if (hasListingName) await applyListingName(char, remoteCard);
+            if (hasListingName && !await applyListingName(char, remoteCard)) {
+                throw new Error('Failed to save the updated listing name');
+            }
+            preserveDatacatExportSelection(char, remoteData, updatedFields);
             const hasCardFields = Object.keys(updatedFields).length > 0;
             const success = hasCardFields ? await CoreAPI.applyCardFieldUpdates(avatar, updatedFields) : true;
             
             if (success) {
                 char._lowerTagline = CoreAPI.getDisplayTagline(char).toLowerCase();
                 successCount++;
+                currentUpdateChecks.delete(avatar);
+                batchSelectedAvatars.delete(avatar);
                 
                 // Update batch list
                 const batchItem = document.querySelector(`.card-update-batch-item[data-avatar="${CSS.escape(avatar)}"]`);
@@ -1811,8 +1937,6 @@ async function applyAllBatchUpdates() {
         }
     }
     
-    currentUpdateChecks.clear();
-    
     CoreAPI.showToast(`Updated ${successCount} character${successCount !== 1 ? 's' : ''}${errorCount > 0 ? `, ${errorCount} failed` : ''}`, 
         errorCount > 0 ? 'warning' : 'success');
     
@@ -1836,6 +1960,8 @@ async function applyAllBatchUpdates() {
 // ========================================
 
 function closeSingleModal() {
+    singleCheckController?.abort();
+    singleCheckController = null;
     singleModalAvatar = null;
     singleModalClosedAt = Date.now();
     document.getElementById('cardUpdateSingleModal')?.classList.remove('visible');
@@ -1873,6 +1999,7 @@ function updateSourceBadge(modal, char) {
 
 function closeBatchModal() {
     abortController?.abort();
+    abortController = null;
     batchCheckPaused = false;
     batchCheckRunning = false;
     batchCheckedCount = 0;

@@ -640,6 +640,24 @@ export async function browserFetch(path, token, endpoint, opts = {}) {
     return { status: data.status || 0, body: data.body || '', retryAfter: data.retryAfter || '' };
 }
 
+/**
+ * Fetch one JannyAI character page as HTML through the same browser endpoint.
+ *
+ * Every browser-side transport fails on that document: no CORS headers, and Cloudflare answers
+ * a bare XHR with 403 even when it carries a clearance cookie that works for normal browsing.
+ * Routing through the server browser is also what makes JannyAI usable from a phone, where no
+ * userscript manager is available.
+ *
+ * @returns {Promise<string>} the page HTML
+ */
+export async function jannyBrowserPage(url, endpoint) {
+    const data = await callHelper('/janny-browser-page', {
+        ...browserTarget(endpoint),
+        url,
+    }, { timeoutMs: 120000 });
+    return data.body || '';
+}
+
 // ========================================
 // V2 CARD BUILDER
 // ========================================

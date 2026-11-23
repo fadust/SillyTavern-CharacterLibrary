@@ -6,9 +6,8 @@
 import { ProviderBase } from '../provider-interface.js';
 import CoreAPI from '../../core-api.js';
 import { assignGalleryId, importFromPng } from '../provider-utils.js';
-import chartavernBrowseView from './chartavern-browse.js';
+import chartavernBrowseView from './chartavern-browse.js?v=ct2';
 import {
-    CT_SITE_BASE,
     fetchWithProxy,
     searchCards,
     fetchCharacterDetail,
@@ -25,7 +24,9 @@ import {
     ctSetCookie,
     ctValidateSession,
     fetchCtSessionInfo,
-} from './chartavern-api.js';
+    initChartavernApi,
+    getCtSiteBase,
+} from './chartavern-api.js?v=ct2';
 
 let api = null;
 
@@ -46,6 +47,13 @@ let api = null;
  *   tagline / description           → V2 creator_notes
  */
 function buildV2FromDetail(card, authorName, altGreetings) {
+    if (card._exportCard?.data) {
+        const result = structuredClone(card._exportCard);
+        result.data.name = getCtCharName(card);
+        result.data.extensions ||= {};
+        result.data.extensions.chartavern = { ...(result.data.extensions.chartavern || {}), id: card.id, path: card.path, tagline: card.tagline || '' };
+        return result;
+    }
     return {
         spec: 'chara_card_v2',
         spec_version: '2.0',
@@ -119,7 +127,7 @@ class ChartavernProvider extends ProviderBase {
     get id() { return 'chartavern'; }
     get name() { return 'CharacterTavern'; }
     get icon() { return 'fa-solid fa-beer-mug-empty'; }
-    get iconUrl() { return `${CT_SITE_BASE}/favicon.ico`; }
+    get iconUrl() { return `${getCtSiteBase()}/favicon.ico`; }
     // Base SFW browse works without cl-helper (ctFetch falls to ST /proxy/ when no session), so
     // NO global minClHelperVersion. Only NSFW (cookie session via /ct-proxy) is cl-helper-gated.
     get clHelperFeatures() { return { nsfw: { minVersion: '1.0.0', label: 'NSFW browsing' } }; }
@@ -137,6 +145,7 @@ class ChartavernProvider extends ProviderBase {
 
     async init(coreAPI) {
         super.init(coreAPI);
+        initChartavernApi({ getSetting: coreAPI.getSetting });
         api = coreAPI;
 
         // Boot keep-alive: slide CT's sliding 10-day session so it doesnt lapse for users who
@@ -425,18 +434,31 @@ class ChartavernProvider extends ProviderBase {
                     return cardData;
                 }
             } catch (e) {
+                if (e.name === 'AbortError') throw e;
                 console.warn('[ChartavernProvider] PNG extraction failed, falling back to detail API:', e.message);
             }
 
             // Fallback: detail API only (alternate_greetings will be empty)
             const data = await fetchCharacterDetail(parts[0], parts[1], api?.apiRequest);
-            if (!data?.card) return null;
+            if (!data?.card || Array.isArray(data.card) || typeof data.card.name !== 'string') {
+                throw new Error('CharacterTavern returned an invalid character detail response');
+            }
             const result = buildV2FromDetail(data.card, parts[0]);
-            if (result) result._listingName = this.getListingName(data.card);
+            if (result) {
+                result._listingName = this.getListingName(data.card);
+                // These fields are only present in the exported PNG, never in detail API.
+                if (!data.card._exportCard || !Object.hasOwn(data.card._exportCard.data, 'alternate_greetings')) {
+                    result._unavailableFields = new Set(['alternate_greetings']);
+                }
+                if (!data.card._exportCard || !Object.hasOwn(data.card._exportCard.data, 'character_book')) {
+                    result._lorebookUnavailable = true;
+                }
+            }
             return result;
         } catch (e) {
             console.error('[ChartavernProvider] fetchRemoteCard failed:', linkInfo.fullPath, e);
-            return null;
+            if (e.notFound) return null;
+            throw e;
         }
     }
 
