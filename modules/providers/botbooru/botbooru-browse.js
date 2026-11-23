@@ -1,5 +1,6 @@
 // BotbooruBrowseView - Botbooru browse/search UI for the Online tab
 
+import { onlineCardTextAttribute } from '../online-content-search.js';
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
 import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, CL_HELPER_PLUGIN_BASE, isMobileMode, absolutizeMediaPaths, finishBrowseImport, renderBrowseError } from '../provider-utils.js';
@@ -2624,7 +2625,7 @@ function createBotbooruCard(post) {
     const tooltip = escapeHtml(post.tagline || post.creator_notes_excerpt || '');
 
     return `
-        <div class="${cardClass}" data-post-id="${escapeHtml(id)}" ${tooltip ? `title="${tooltip}"` : ''}>
+        <div class="${cardClass}" ${onlineCardTextAttribute(post.creator_notes, post.creator_notes_excerpt, post.description, post.definition?.description)} data-post-id="${escapeHtml(id)}" ${tooltip ? `title="${tooltip}"` : ''}>
             <div class="browse-card-image">
                 <img data-src="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low">
                 ${isNsfl ? '<span class="browse-nsfw-badge botbooru-nsfl-badge">NSFL</span>' : isNsfw ? '<span class="browse-nsfw-badge">NSFW</span>' : ''}

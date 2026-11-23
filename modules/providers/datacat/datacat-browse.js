@@ -5,6 +5,7 @@
 //   - JanitorAI MeiliSearch: text search + sort (activated via janny_* sort modes)
 //   - Extraction: cloud-browser extraction for JanitorAI-only characters
 
+import { onlineCardTextAttribute } from '../online-content-search.js';
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
 import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, renderBrowseError } from '../provider-utils.js';
@@ -300,7 +301,7 @@ function createDatacatCard(hit) {
     const cardClass = inLibrary ? 'browse-card in-library' : possibleMatch ? 'browse-card possible-library' : 'browse-card';
 
     return `
-        <div class="${cardClass}" data-datacat-id="${escapeHtml(String(charId))}" ${desc ? `title="${escapeHtml(desc)}"` : ''}>
+        <div class="${cardClass}" ${onlineCardTextAttribute(hit.creator_notes, hit.description, hit.data?.description)} data-datacat-id="${escapeHtml(String(charId))}" ${desc ? `title="${escapeHtml(desc)}"` : ''}>
             <div class="browse-card-image">
                 <img data-src="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low" onerror="this.dataset.failed='1';this.src='/img/ai4.png'">
                 ${nsfwBadge}

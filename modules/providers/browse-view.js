@@ -1,6 +1,7 @@
 // BrowseView - base class for provider browse views in the Online tab
 
 import CoreAPI from '../core-api.js';
+import { addOnlineContentSearch } from './online-content-search.js';
 import { normalizeBrowseName, isMobileMode, scrollBrowseListTop, fetchWithProxy, slugify } from './provider-utils.js';
 import { getChubApiBase, getChubHeaders, extractNodes } from './chub/chub-api.js';
 import { BOTBOORU_BASE, fetchBotbooruUser } from './botbooru/botbooru-api.js';
@@ -722,6 +723,10 @@ export class BrowseView {
         if (this._dropdownDismissPairs && !this._dropdownCloseHandler) {
             this._registerDropdownDismiss(this._dropdownDismissPairs);
         }
+        this._contentSearch ??= addOnlineContentSearch(container, {
+            canLoadMore: () => this.canLoadMore(),
+            loadMore: () => this.loadMore(),
+        });
         // Attach infinite scroll listener
         this._attachScrollListener();
         if (this.creatorDownloadEnabled()) {
@@ -784,6 +789,8 @@ export class BrowseView {
     deactivate() {
         this._removeDropdownDismiss();
         this._detachScrollListener();
+        this._contentSearch?.dispose();
+        this._contentSearch = null;
         // Reset manager state for clean re-activation
         this._mgrOpen = false;
         clearTimeout(this._mgrDebounceTimer);
@@ -1319,7 +1326,7 @@ export class BrowseView {
         if (!scrollContainer) return;
 
         this._scrollHandler = () => {
-            if (!this.isInfiniteScrollEnabled()) return;
+            if (this._contentSearch?.isFiltering() || !this.isInfiniteScrollEnabled()) return;
             if (this._prefetching || !this.canLoadMore()) return;
 
             const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
@@ -1367,7 +1374,7 @@ export class BrowseView {
 
     _deferredScrollCheck() {
         requestAnimationFrame(() => {
-            if (!this.isInfiniteScrollEnabled()) return;
+            if (this._contentSearch?.isFiltering() || !this.isInfiniteScrollEnabled()) return;
             if (this._prefetching || !this.canLoadMore()) return;
             const sc = document.querySelector('.gallery-content');
             if (!sc) return;

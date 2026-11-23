@@ -336,6 +336,39 @@
 
 
 /* ChubAI Search Bar */
+.online-content-search {
+    margin: 0 0 12px;
+    color: var(--text-secondary);
+}
+
+.online-content-search summary {
+    width: fit-content;
+    cursor: pointer;
+    color: var(--text-primary);
+}
+
+.online-content-search-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.online-content-search-controls input {
+    flex: 1 1 200px;
+    min-width: 0;
+}
+
+.online-content-search [role="status"] {
+    margin: 6px 0 0;
+}
+
+.online-content-no-match,
+.online-content-search button[hidden] {
+    display: none !important;
+}
+
 .browse-search-bar {
     display: flex;
     flex-direction: row;

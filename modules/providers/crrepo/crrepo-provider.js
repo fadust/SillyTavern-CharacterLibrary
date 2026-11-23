@@ -2,6 +2,7 @@
 // See modules/providers/crrepo/crrepo-api.js for the bundle fetch/parse logic and the
 // v1-scope rationale (cr-bundle + cr-record + cr-uri-address only).
 
+import { addOnlineContentSearch, onlineCardTextAttribute } from '../online-content-search.js';
 import { ProviderBase } from '../provider-interface.js';
 import CoreAPI from '../../core-api.js';
 import { importFromPng, slugify } from '../provider-utils.js';
@@ -51,6 +52,7 @@ class CrRepoProvider extends ProviderBase {
     }
 
     async activate(container) {
+        this.contentSearch ??= addOnlineContentSearch(container);
         const addBtn = container.querySelector('#crrepoAddUrlBtn');
         const addInput = container.querySelector('#crrepoAddUrlInput');
         addBtn?.addEventListener('click', async () => {
@@ -70,6 +72,11 @@ class CrRepoProvider extends ProviderBase {
         });
 
         await this._refresh(container);
+    }
+
+    deactivate() {
+        this.contentSearch?.dispose();
+        this.contentSearch = null;
     }
 
     async _refresh(container) {
@@ -116,7 +123,7 @@ class CrRepoProvider extends ProviderBase {
         }
 
         gridEl.innerHTML = allChars.map((c, i) => `
-            <div class="crrepo-char-card" data-index="${i}">
+            <div class="crrepo-char-card" ${onlineCardTextAttribute(c.description)} data-index="${i}">
                 <div class="crrepo-char-title">${CoreAPI.escapeHtml(c.title)}</div>
                 ${c.description ? `<div class="crrepo-char-desc">${CoreAPI.escapeHtml(c.description)}</div>` : ''}
                 <button class="menu_button crrepo-import-btn"><i class="fa-solid fa-download"></i> Import</button>

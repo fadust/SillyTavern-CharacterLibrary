@@ -1,5 +1,6 @@
 // JannyBrowseView - JannyAI browse/search UI for the Online tab
 
+import { onlineCardTextAttribute } from '../online-content-search.js';
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
 import { isJanitorBridgeAvailable, warmJanitorClearance } from '../janitor-bridge.js';
@@ -218,7 +219,7 @@ function createJannyCard(hit) {
     const cardClass = inLibrary ? 'browse-card in-library' : possibleMatch ? 'browse-card possible-library' : 'browse-card';
 
     return `
-        <div class="${cardClass}" data-janny-id="${escapeHtml(String(charId))}" data-slug="${escapeHtml(slug)}" ${desc ? `title="${escapeHtml(desc)}"` : ''}>
+        <div class="${cardClass}" ${onlineCardTextAttribute(hit.creator_notes, hit.description, hit.personality)} data-janny-id="${escapeHtml(String(charId))}" data-slug="${escapeHtml(slug)}" ${desc ? `title="${escapeHtml(desc)}"` : ''}>
             <div class="browse-card-image">
                 <img data-src="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low" onerror="this.dataset.failed='1';this.src='/img/ai4.png'">
                 ${badges.length > 0 ? `<div class="browse-feature-badges">${badges.join('')}</div>` : ''}

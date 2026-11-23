@@ -9209,11 +9209,13 @@ function resetFiltersAndSearch() {
     const searchListingName = document.getElementById('searchListingName');
     const searchDesc = document.getElementById('searchDesc');
     const searchTags = document.getElementById('searchTags');
+    const searchNotes = document.getElementById('searchNotes');
     
     if (searchName) searchName.checked = true;
     if (searchListingName) searchListingName.checked = true;
     if (searchDesc) searchDesc.checked = false;
     if (searchTags) searchTags.checked = true;
+    if (searchNotes) searchNotes.checked = getSetting('searchInNotes') === true;
 }
 
 // Toast Icons

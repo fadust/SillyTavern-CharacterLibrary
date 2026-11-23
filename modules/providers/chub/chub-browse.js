@@ -1,5 +1,6 @@
 // ChubBrowseView - ChubAI browse/search UI for the Online tab
 
+import { onlineCardTextAttribute } from '../online-content-search.js';
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
 import { IMG_PLACEHOLDER, formatNumber, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, proxyEncode, readJsonClassified, renderBrowseError, fetchWithProxy } from '../provider-utils.js';
@@ -3368,7 +3369,7 @@ function createChubCard(char, isTimeline = false) {
     const taglineTooltip = char.tagline ? escapeHtml(char.tagline) : '';
     
     return `
-        <div class="${cardClass}" data-full-path="${escapeHtml(fullPath)}" ${taglineTooltip ? `title="${taglineTooltip}"` : ''}>
+        <div class="${cardClass}" ${onlineCardTextAttribute(char.creator_notes, char.description, char.definition?.description)} data-full-path="${escapeHtml(fullPath)}" ${taglineTooltip ? `title="${taglineTooltip}"` : ''}>
             <div class="browse-card-image">
                 <img data-src="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low" onerror="this.dataset.failed='1';this.src='/img/ai4.png'">
                 ${char.nsfw ? '<span class="browse-nsfw-badge">NSFW</span>' : ''}

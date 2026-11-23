@@ -1,5 +1,6 @@
 // WyvernBrowseView - Wyvern browse/search UI for the Online tab
 
+import { onlineCardTextAttribute } from '../online-content-search.js';
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
 import { IMG_PLACEHOLDER, formatNumber, fetchWithProxy, BROWSE_PURIFY_CONFIG, skeletonLines, deferRender, deferCall, isMobileMode, finishBrowseImport, readJsonClassified, renderBrowseError } from '../provider-utils.js';
@@ -2363,7 +2364,7 @@ function createWyvernCard(char) {
     const taglineTooltip = char.tagline ? escapeHtml(char.tagline) : '';
 
     return `
-        <div class="${cardClass}" data-char-id="${escapeHtml(charId)}" ${taglineTooltip ? `title="${taglineTooltip}"` : ''}>
+        <div class="${cardClass}" ${onlineCardTextAttribute(char.creator_notes, char.description, wyvernDetailCache.get(charId)?.creator_notes, wyvernDetailCache.get(charId)?.description)} data-char-id="${escapeHtml(charId)}" ${taglineTooltip ? `title="${taglineTooltip}"` : ''}>
             <div class="browse-card-image">
                 <img data-src="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low" onerror="this.dataset.failed='1';this.src='/img/ai4.png'">
                 ${ratingLabel ? `<span class="browse-nsfw-badge">${escapeHtml(ratingLabel)}</span>` : ''}

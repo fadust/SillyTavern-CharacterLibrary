@@ -486,6 +486,8 @@ When **Unique Gallery Folders** is enabled, each character's gallery depends on 
 
 The **Online** tab lets you browse, search, and import characters from multiple online sources. Switch between providers using the provider selector dropdown.
 
+Open **Search notes & descriptions** to find keywords in the text supplied for loaded cards. The filter shows how many cards match and how many have searchable text. Use **Load more cards** to include the next page when available. The provider's catalogue search remains available for finding cards beyond the loaded results.
+
 All providers share a common set of capabilities:
 - **Browse & search** with filtering and sorting
 - **Infinite scroll** with automatic page loading as you scroll (toggleable per provider)

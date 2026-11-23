@@ -1,5 +1,6 @@
 // CharaVaultBrowseView - CharaVault browse/search UI for the Online tab
 
+import { onlineCardText } from '../online-content-search.js';
 import { BrowseView } from '../browse-view.js';
 import CoreAPI from '../../core-api.js';
 import { IMG_PLACEHOLDER, formatNumber } from '../provider-utils.js';
@@ -661,6 +662,7 @@ function buildCvCard(char) {
     card.dataset.fullPath = char.fullPath;
     card.dataset.charIdx = String(cvCharacters.indexOf(char));
     if (taglineTooltip) card.title = taglineTooltip;
+    card.dataset.onlineCardText = onlineCardText(char.creator_notes, char.description, char.description_preview);
     card.innerHTML = `
         <div class="browse-card-image">
             <img data-src="${escapeHtml(thumbUrl)}" src="${IMG_PLACEHOLDER}" alt="${name}" loading="lazy" decoding="async" fetchpriority="low">
