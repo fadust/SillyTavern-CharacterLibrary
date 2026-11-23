@@ -781,6 +781,10 @@ export class BrowseView {
         }
     }
 
+    clearContentSearch() {
+        this._contentSearch?.clear();
+    }
+
     /**
      * Called when leaving this provider's view.
      * Disconnect observers, abort fetches, etc.

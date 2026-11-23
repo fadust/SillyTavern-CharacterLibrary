@@ -372,7 +372,7 @@ class WyvernBrowseView extends BrowseView {
                 <div class="browse-search-bar">
                     <div class="browse-search-input-wrapper">
                         <i class="fa-solid fa-search"></i>
-                        <input type="search" id="wyvernSearchInput" placeholder="Search Wyvern characters..." autocomplete="one-time-code">
+                        <input type="search" id="wyvernSearchInput" placeholder="Search names or creator’s notes…" autocomplete="one-time-code">
                         <button id="wyvernClearSearchBtn" class="browse-search-clear hidden" title="Clear search">
                             <i class="fa-solid fa-xmark"></i>
                         </button>
@@ -641,6 +641,9 @@ class WyvernBrowseView extends BrowseView {
     getSearchModes() { return ['character', 'creator']; }
     getSearchInputId(mode) {
         return mode === 'creator' ? 'wyvernCreatorSearchInput' : 'wyvernSearchInput';
+    }
+    getSearchPlaceholder(mode) {
+        return mode === 'creator' ? super.getSearchPlaceholder(mode) : 'Names or creator’s notes…';
     }
 
     applyDefaults(defaults) {

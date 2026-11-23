@@ -77,6 +77,7 @@ let bbLoadToken = 0;
 let bbSortPreset = 'latest';
 let bbNsfwEnabled = false; // persisted via the botbooruNsfw setting (synced in initBotbooruView); SFW is the fresh-install default
 let bbCurrentSearch = '';
+let bbWritingQuery = '';
 let bbUploaderFilter = null; // {id, name} - uploads-view mode (writers are tags and ride the search instead)
 let bbUploaderSort = 'latest'; // uploads-view sort; valid upload_sort values: latest, downloads, favorites
 
@@ -674,6 +675,13 @@ class BotbooruBrowseView extends BrowseView {
                     </div>
                 </div>
 
+                <form id="botbooruWritingSearch" class="online-content-search-controls">
+                    <label for="botbooruWritingQuery">Search catalogue writing</label>
+                    <input id="botbooruWritingQuery" type="search" class="glass-input"
+                        placeholder="Words in the description…" autocomplete="off">
+                    <button type="submit" class="glass-btn">Search writing</button>
+                </form>
+
                 <!-- Uploader Filter Banner -->
                 <div id="botbooruCreatorBanner" class="chub-author-banner hidden">
                     <div class="chub-author-banner-content">
@@ -975,6 +983,7 @@ class BotbooruBrowseView extends BrowseView {
     activate(container, options = {}) {
         if (options.domRecreated) {
             bbCurrentSearch = '';
+            bbWritingQuery = '';
             bbUploaderFilter = null;
             bbPosts = [];
             bbTotal = 0;
@@ -1141,6 +1150,16 @@ function initBotbooruView() {
         document.getElementById('botbooruClearSearchBtn')?.classList.toggle('hidden', !e.target.value.trim());
     });
     on('botbooruSearchBtn', 'click', () => performBotbooruSearch());
+    on('botbooruWritingSearch', 'submit', (event) => {
+        event.preventDefault();
+        bbWritingQuery = document.getElementById('botbooruWritingQuery').value.trim();
+        if (bbWritingQuery) {
+            if (bbUploaderFilter) clearUploaderFilter(false);
+            if (resetBotbooruFavoritesFilter()) updateBotbooruFeaturesButton();
+            botbooruBrowseView.clearContentSearch();
+        }
+        loadBotbooruPosts(true);
+    });
     on('botbooruUploaderSearchInput', 'keypress', (e) => {
         if (e.key === 'Enter') performBotbooruUploaderSearch();
     });
@@ -1204,6 +1223,7 @@ function initBotbooruView() {
                 // client-side predicate; it lives in the browse grid
                 if (bbViewMode === 'following') switchBotbooruViewMode('browse', { skipLoad: true });
                 if (e.target.checked && bbUploaderFilter) clearUploaderFilter(false);
+                if (e.target.checked) clearBotbooruWritingSearch();
                 loadBotbooruPosts(true);
                 return;
             }
@@ -1908,6 +1928,7 @@ function filterByUploader(id, name) {
     bbCurrentSearch = '';
     const searchInput = document.getElementById('botbooruSearchInput');
     if (searchInput) searchInput.value = '';
+    clearBotbooruWritingSearch();
     document.getElementById('botbooruClearSearchBtn')?.classList.add('hidden');
     const banner = document.getElementById('botbooruCreatorBanner');
     const bannerName = document.getElementById('botbooruCreatorBannerName');
@@ -1951,6 +1972,12 @@ function clearUploaderFilter(reload = true) {
     bbUploaderFilter = null;
     document.getElementById('botbooruCreatorBanner')?.classList.add('hidden');
     if (reload) loadBotbooruPosts(true);
+}
+
+function clearBotbooruWritingSearch() {
+    bbWritingQuery = '';
+    const input = document.getElementById('botbooruWritingQuery');
+    if (input) input.value = '';
 }
 
 function resetBotbooruFavoritesFilter() {
@@ -2129,6 +2156,7 @@ async function loadBotbooruPosts(reset = false, append = false) {
             offset: append ? bbPosts.length : 0,
         };
         if (q) params.q = q;
+        if (bbWritingQuery) params.writingQuery = bbWritingQuery;
         // Anonymous requests are SFW-only server-side regardless; the param makes the
         // toggle authoritative for logged-in accounts whose show_nsfw is on.
         if (!bbNsfwEnabled) params.sfwOnly = true;
@@ -2625,7 +2653,7 @@ function createBotbooruCard(post) {
     const tooltip = escapeHtml(post.tagline || post.creator_notes_excerpt || '');
 
     return `
-        <div class="${cardClass}" ${onlineCardTextAttribute(post.creator_notes, post.creator_notes_excerpt, post.description, post.definition?.description)} data-post-id="${escapeHtml(id)}" ${tooltip ? `title="${tooltip}"` : ''}>
+        <div class="${cardClass}" ${onlineCardTextAttribute(post.creator_notes, post.creator_notes_excerpt, post.description, post.description_excerpt, post.definition?.description)} data-post-id="${escapeHtml(id)}" ${tooltip ? `title="${tooltip}"` : ''}>
             <div class="browse-card-image">
                 <img data-src="${escapeHtml(avatarUrl)}" src="${IMG_PLACEHOLDER}" alt="${escapeHtml(name)}" decoding="async" fetchpriority="low">
                 ${isNsfl ? '<span class="browse-nsfw-badge botbooru-nsfl-badge">NSFL</span>' : isNsfw ? '<span class="browse-nsfw-badge">NSFW</span>' : ''}

@@ -488,6 +488,9 @@ The **Online** tab lets you browse, search, and import characters from multiple 
 
 Open **Search notes & descriptions** to find keywords in the text supplied for loaded cards. The filter shows how many cards match and how many have searchable text. Use **Load more cards** to include the next page when available. The provider's catalogue search remains available for finding cards beyond the loaded results.
 
+- **Botbooru** has a **Search catalogue writing** field that sends the keyword to Botbooru's writing index. It can find a word in a card's description even if that card has not been loaded. Botbooru controls which other fields its writing index searches.
+- **Wyvern** can match Creator's Notes in its regular catalogue search. Wyvern's separate [Explore description search](https://app.wyvern.chat/explore) is semantic and subject to Wyvern's account limits.
+
 All providers share a common set of capabilities:
 - **Browse & search** with filtering and sorting
 - **Infinite scroll** with automatic page loading as you scroll (toggleable per provider)

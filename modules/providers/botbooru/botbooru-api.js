@@ -132,7 +132,7 @@ export function getBotbooruDownloadUrl(id, kind = 'png') {
  * Sorts: latest, random, favorites, views, downloads, curated.
  * q is space-joined tag names. sfw_only is only sent when true; NSFW
  * results additionally require a token whose account has show_nsfw on.
- * @param {{ sort?: string, q?: string, sfwOnly?: boolean, minTokens?: number,
+ * @param {{ sort?: string, q?: string, writingQuery?: string, sfwOnly?: boolean, minTokens?: number,
  *           timeWindow?: string, curatedSort?: string, limit?: number, offset?: number }} params
  * @returns {Promise<{total: number, posts: Array}>} failures throw classified errors
  */
@@ -140,6 +140,7 @@ export async function fetchBotbooruPosts(params = {}) {
     const qs = new URLSearchParams();
     if (params.sort) qs.set('sort', params.sort);
     if (params.q) qs.set('q', params.q);
+    if (params.writingQuery) qs.set('qtext', params.writingQuery);
     if (params.sfwOnly) qs.set('sfw_only', 'true');
     if (params.minTokens) qs.set('min_tokens', String(params.minTokens));
     if (params.timeWindow) qs.set('time_window', params.timeWindow);

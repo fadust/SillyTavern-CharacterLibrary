@@ -75,6 +75,10 @@ export function addOnlineContentSearch(container, pagination) {
     update();
     return {
         isFiltering: () => Boolean(query()),
+        clear: () => {
+            input.value = '';
+            update();
+        },
         dispose: () => {
             observer.disconnect();
             panel.open = false;
