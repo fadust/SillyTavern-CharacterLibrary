@@ -15309,7 +15309,6 @@ function openGreetingsModal() {
         }
         
         closeModal();
-        document.removeEventListener('keydown', handleKeydown);
         showToast('Greetings updated', 'success');
     };
 }
@@ -15533,7 +15532,6 @@ function openLorebookModal() {
 
         updateLorebookCount();
         closeModal();
-        document.removeEventListener('keydown', handleKeydown);
         showToast('Lorebook updated', 'success');
     };
 }
@@ -15767,7 +15765,12 @@ function openExpandedFieldEditor(fieldId, fieldLabel) {
     };
     
     document.getElementById('expandFieldClose').onclick = closeExpandModal;
-    expandModal.onclick = (e) => { if (e.target === expandModal) closeExpandModal(); };
+    
+    // Prevent accidental closure of the expanded field editor via backdrop click.
+    // Clicking outside the editor can happen unintentionally while selecting or dragging text,
+    // causing unapplied changes to be lost. The editor can still be closed using the close button or Apply.
+    
+    // expandModal.onclick = (e) => { if (e.target === expandModal) closeExpandModal(); };
     
     // Save/Apply handler
     document.getElementById('expandFieldSave').onclick = () => {
@@ -15783,7 +15786,6 @@ function openExpandedFieldEditor(fieldId, fieldLabel) {
         }
         
         closeExpandModal();
-        document.removeEventListener('keydown', handleKeydown);
         showToast('Changes applied to field', 'success');
     };
 }
